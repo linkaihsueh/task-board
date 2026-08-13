@@ -56,8 +56,28 @@
   .form-actions{display:flex;gap:8px;margin-top:14px}
   .btn{border:1.5px solid var(--ink);background:transparent;border-radius:3px;
        padding:11px 14px;font-weight:700;flex:1}
-  .btn[disabled]{opacity:.45}
+  .btn[disabled]{cursor:default}
   .btn-solid{background:var(--ink);color:var(--paper)}
+  .btn-solid[disabled]{background:var(--line);border-color:var(--line);color:var(--slip)}
+
+  .check{display:flex;align-items:center;gap:9px;padding:10px 2px;font-size:15px;
+         font-weight:600;cursor:pointer;border-top:1px solid var(--line);margin-top:4px}
+  .check input{width:20px;height:20px;accent-color:var(--ink);margin:0}
+  .field select{width:100%;background:var(--slip);border:1.5px solid var(--line);
+                border-radius:2px;padding:9px 8px;font-size:16px;color:inherit}
+  .field select:focus{outline:0;border-color:var(--blue)}
+  .hint{margin:2px 0 0;font-family:var(--mono);font-size:11px;color:var(--blue)}
+
+  .rrow{display:flex;align-items:center;gap:9px;padding:11px 2px;
+        border-bottom:1px dashed var(--line)}
+  .rrow .cyc{flex:none;font-size:11px;font-weight:700;color:var(--blue);
+             border:1px solid var(--blue);border-radius:2px;padding:1px 6px}
+  .rrow .t{flex:1;min-width:0;font-size:15px;font-weight:600;
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rrow .m{flex:none;font-family:var(--mono);font-size:10px;color:var(--mute)}
+  .rrow .del{flex:none;background:none;border:0;padding:4px 6px;color:var(--chop);font-size:16px}
+  .tag-rep{flex:none;font-size:10px;font-weight:700;color:var(--blue);
+           border:1px solid var(--blue);border-radius:2px;padding:0 4px;margin-left:6px}
   .btn-quiet{border-color:var(--line);color:var(--mute);flex:0 0 auto;padding:11px 16px}
   .btn-danger{border-color:var(--chop);color:var(--chop)}
 
@@ -197,18 +217,45 @@
     <div class="form" id="form">
       <div class="field">
         <label for="fTitle">要做什麼</label>
-        <input id="fTitle" type="text" placeholder="例：整理下週簡報" autocomplete="off">
+        <input id="fTitle" type="text" autocomplete="off">
       </div>
       <div class="field">
-        <label for="fSite">分類／地點（可留空）</label>
-        <input id="fSite" type="text" placeholder="例：行銷組" autocomplete="off">
+        <label for="fSite">分類（可留空）</label>
+        <input id="fSite" type="text" autocomplete="off">
       </div>
       <div class="field">
         <label for="fDesc">說明（可留空）</label>
-        <textarea id="fDesc" placeholder="細節、聯絡人、注意事項…"></textarea>
+        <textarea id="fDesc"></textarea>
       </div>
+
+      <label class="check"><input type="checkbox" id="fRepeat"><span>重複</span></label>
+      <div id="repeatBox" hidden>
+        <div class="field">
+          <label for="fFreq">多久一次</label>
+          <select id="fFreq">
+            <option value="每天">每天</option>
+            <option value="每週">每週</option>
+            <option value="每月" selected>每月</option>
+            <option value="每年">每年</option>
+          </select>
+        </div>
+        <div class="field" id="wkField" hidden>
+          <label for="fWeekday">星期幾</label>
+          <select id="fWeekday"></select>
+        </div>
+        <div class="field" id="monField" hidden>
+          <label for="fMonth">幾月</label>
+          <select id="fMonth"></select>
+        </div>
+        <div class="field" id="dayField">
+          <label for="fDay">幾號</label>
+          <select id="fDay"></select>
+        </div>
+        <p class="hint" id="repeatHint"></p>
+      </div>
+
       <div class="form-actions">
-        <button class="btn btn-solid" id="fSave">加入待辦</button>
+        <button class="btn btn-solid" id="fSave" disabled>加入待辦</button>
         <button class="btn btn-quiet" id="fCancel">取消</button>
       </div>
     </div>
@@ -223,6 +270,14 @@
       <span class="caret">▾</span>
     </button>
     <div class="done-list" id="doneList"></div>
+  </section>
+
+  <section id="repeatSection" hidden>
+    <button class="done-head" id="repeatHead" aria-expanded="false">
+      重複設定 <b id="repeatCount" style="color:var(--ink)">0</b> 項
+      <span class="caret">▾</span>
+    </button>
+    <div class="done-list" id="repeatList"></div>
   </section>
 
   <section id="trashSection" hidden>
@@ -253,6 +308,7 @@
   var TRASH_DAYS = 30;
 
   var tasks = [];
+  var repeats = [];
   var me = '';
   var pass = '';
   var overlayOpen = false;
@@ -268,6 +324,7 @@
   function pad(n){ return String(n).padStart(2,'0'); }
   function fmt(ts){ var d=new Date(ts); return (d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
   function fmtFull(ts){ var d=new Date(ts); return d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
+  function fmtDay(ts){ var d=new Date(ts); return (d.getMonth()+1)+'/'+pad(d.getDate()); }
   function whoami(){ return me || '（未署名）'; }
   function toast(msg){
     var t=$('toast'); t.textContent=msg; t.classList.add('show');
@@ -315,8 +372,32 @@
   function refresh(){
     return api('list').then(function(d){
       tasks = d.tasks || [];
+      repeats = d.repeats || [];
       if(d.trashDays) TRASH_DAYS = d.trashDays;
       render();
+    });
+  }
+
+  function renderRepeats(){
+    $('repeatCount').textContent = repeats.length;
+    $('repeatSection').hidden = repeats.length === 0;
+    $('repeatList').innerHTML = repeats.map(function(r){
+      return '<div class="rrow">'
+        + '<span class="cyc">'+esc(r.label)+'</span>'
+        + '<span class="t">'+esc(r.title)+'</span>'
+        + '<span class="m">'+(r.next ? '下次 '+fmtDay(r.next) : '')+'</span>'
+        + '<button class="del" data-delrepeat="'+r.id+'" aria-label="刪除重複設定">✕</button>'
+        + '</div>';
+    }).join('');
+    $('repeatList').querySelectorAll('[data-delrepeat]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var id = b.getAttribute('data-delrepeat');
+        var r = repeats.filter(function(x){ return x.id===id; })[0];
+        if(!confirm('刪除重複設定「'+(r?r.title:'')+'」？\n\n已經產生的待辦不會消失，只是以後不再自動出現。')) return;
+        b.disabled = true;
+        api('delRepeat',{id:id}).then(refresh).then(function(){ toast('已刪除重複設定'); })
+          .catch(function(e){ toast(e.message); });
+      });
     });
   }
 
@@ -359,7 +440,9 @@
       + '<button class="tick" data-tick="'+t.id+'" aria-label="標記完工：'+esc(t.title)+'"></button>'
       + '<button class="slip-body" data-open="'+t.id+'">'
       + '<span class="slip-top"><span class="no">#'+pad(t.no)+'</span>'
-      + '<span class="title">'+esc(t.title)+'</span></span>'
+      + '<span class="title">'+esc(t.title)
+      + (t.logs[0] && t.logs[0].action === '自動建立' ? '<span class="tag-rep">重複</span>' : '')
+      + '</span></span>'
       + (t.site ? '<span class="site">'+esc(t.site)+'</span>' : '')
       + '<div class="byline">'+esc(t.createdBy)+' · '+fmt(t.createdAt)+' 建立'
       + (t.logs.length>1 ? ' · 紀錄 '+t.logs.length : '')+'</div>'
@@ -403,6 +486,7 @@
     $('doneList').innerHTML = done.length ? done.map(doneRowHTML).join('')
       : '<div class="empty">還沒有完工的項目。</div>';
     $('trashList').innerHTML = trash.map(trashRowHTML).join('');
+    renderRepeats();
   }
 
   function byId(id){
@@ -658,30 +742,106 @@
     });
   }
 
+  /* ---------- 重複設定表單 ---------- */
+  var WEEKDAYS = ['','星期一','星期二','星期三','星期四','星期五','星期六','星期日'];
+
+  function fillSelect(el, from, to, label){
+    var out='';
+    for(var i=from;i<=to;i++){ out += '<option value="'+i+'">'+label(i)+'</option>'; }
+    el.innerHTML = out;
+  }
+  fillSelect($('fWeekday'), 1, 7, function(i){ return WEEKDAYS[i]; });
+  fillSelect($('fMonth'), 1, 12, function(i){ return i+' 月'; });
+  fillSelect($('fDay'), 1, 31, function(i){ return i+' 號'; });
+  $('fDay').value = String(new Date().getDate());
+  $('fMonth').value = String(new Date().getMonth()+1);
+  $('fWeekday').value = String(new Date().getDay() || 7);
+
+  function repeatParam(){
+    var f = $('fFreq').value;
+    if(f==='每週') return $('fWeekday').value;
+    if(f==='每月') return $('fDay').value;
+    if(f==='每年') return $('fMonth').value + '-' + $('fDay').value;
+    return '';
+  }
+  function repeatLabel(){
+    var f = $('fFreq').value;
+    if(f==='每天') return '每天';
+    if(f==='每週') return '每' + WEEKDAYS[Number($('fWeekday').value)].replace('星期','週');
+    if(f==='每月') return '每月 ' + $('fDay').value + ' 號';
+    return '每年 ' + $('fMonth').value + ' 月 ' + $('fDay').value + ' 日';
+  }
+  function syncRepeatUI(){
+    var on = $('fRepeat').checked;
+    var f = $('fFreq').value;
+    $('repeatBox').hidden = !on;
+    $('wkField').hidden = f!=='每週';
+    $('monField').hidden = f!=='每年';
+    $('dayField').hidden = (f==='每天' || f==='每週');
+    $('repeatHint').textContent = on ? (repeatLabel() + ' 自動出現在待辦清單') : '';
+    $('fSave').textContent = on ? '建立重複設定' : '加入待辦';
+  }
+  function syncSaveState(){ $('fSave').disabled = !$('fTitle').value.trim(); }
+
+  $('fRepeat').addEventListener('change', syncRepeatUI);
+  $('fFreq').addEventListener('change', syncRepeatUI);
+  ['fWeekday','fMonth','fDay'].forEach(function(id){
+    $(id).addEventListener('change', syncRepeatUI);
+  });
+
   /* ---------- 綁定 ---------- */
+  function resetForm(){
+    $('fTitle').value=''; $('fSite').value=''; $('fDesc').value='';
+    $('fRepeat').checked = false;
+    syncRepeatUI();
+    syncSaveState();
+  }
+
   function addTask(){
     var title=$('fTitle').value.trim();
     if(!title){ toast('先寫要做什麼'); return; }
     var btn=$('fSave');
     btn.disabled=true;
-    api('add',{ title:title, site:$('fSite').value.trim(), desc:$('fDesc').value.trim() })
+
+    var repeating = $('fRepeat').checked;
+    var payload = { title:title, site:$('fSite').value.trim(), desc:$('fDesc').value.trim() };
+    if(repeating){ payload.freq = $('fFreq').value; payload.param = repeatParam(); }
+
+    api(repeating ? 'addRepeat' : 'add', payload)
       .then(refresh).then(function(){
-        $('fTitle').value=''; $('fSite').value=''; $('fDesc').value='';
+        var wasRepeating = repeating;
+        resetForm();
         $('form').classList.remove('open');
-        toast('已加入待辦');
+        if(wasRepeating){
+          var head=$('repeatHead');
+          if(head.getAttribute('aria-expanded')!=='true') head.click();
+          toast('重複設定已建立');
+        } else {
+          toast('已加入待辦');
+        }
       })
-      .catch(function(e){ toast(e.message); })
-      .then(function(){ btn.disabled=false; });
+      .catch(function(e){ toast(e.message); btn.disabled=false; });
   }
 
   $('addToggle').addEventListener('click', function(){
     var f=$('form');
     f.classList.toggle('open');
-    if(f.classList.contains('open')) $('fTitle').focus();
+    if(f.classList.contains('open')){ syncSaveState(); $('fTitle').focus(); }
   });
-  $('fCancel').addEventListener('click', function(){ $('form').classList.remove('open'); });
+  $('fCancel').addEventListener('click', function(){
+    $('form').classList.remove('open');
+    resetForm();
+  });
   $('fSave').addEventListener('click', addTask);
-  $('fTitle').addEventListener('keydown', function(e){ if(e.key==='Enter') addTask(); });
+  $('fTitle').addEventListener('input', syncSaveState);
+  $('fTitle').addEventListener('keydown', function(e){
+    if(e.key==='Enter' && $('fTitle').value.trim()) addTask();
+  });
+  $('repeatHead').addEventListener('click', function(){
+    var exp=this.getAttribute('aria-expanded')==='true';
+    this.setAttribute('aria-expanded', exp?'false':'true');
+    $('repeatList').classList.toggle('open', !exp);
+  });
   $('doneHead').addEventListener('click', function(){
     var exp=this.getAttribute('aria-expanded')==='true';
     this.setAttribute('aria-expanded', exp?'false':'true');

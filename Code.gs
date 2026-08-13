@@ -16,12 +16,21 @@ var TASK_SHEET   = '任務';
 var LOG_SHEET    = '紀錄';
 var PHOTO_FOLDER = '群組待辦板照片';
 
-var TASK_HEADERS = ['編號','標題','案場','說明','狀態','建立者','建立時間',
+var REPEAT_SHEET = '重複設定';
+
+var TASK_HEADERS = ['編號','標題','分類','說明','狀態','建立者','建立時間',
                     '完工者','完工時間','完工備註','刪除者','刪除時間','照片','系統編號'];
 var LOG_HEADERS  = ['時間','任務編號','任務標題','誰','動作','內容'];
+var REPEAT_HEADERS = ['編號','標題','分類','說明','頻率','設定','參數','下次出現',
+                      '建立者','建立時間','狀態','系統編號'];
 
 var COL = { no:0, title:1, site:2, desc:3, status:4, createdBy:5, createdAt:6,
             doneBy:7, doneAt:8, doneNote:9, delBy:10, delAt:11, photos:12, id:13 };
+
+var RCOL = { no:0, title:1, site:2, desc:3, freq:4, label:5, param:6, next:7,
+             by:8, at:9, status:10, id:11 };
+
+var FREQS = ['每天','每週','每月','每年'];
 
 var OPEN = '待辦中', DONE = '已完工', TRASH = '刪除區';
 
@@ -49,6 +58,8 @@ function doPost(e) {
       case 'reopen':  out = reopenTask_(req, who); break;
       case 'trash':   out = trashTask_(req, who); break;
       case 'restore': out = restoreTask_(req, who); break;
+      case 'addRepeat': out = addRepeat_(req, who); break;
+      case 'delRepeat': out = delRepeat_(req, who); break;
       default: throw new Error('不認得的動作：' + req.action);
     }
     return json_(out);
@@ -74,8 +85,16 @@ function sheet_(name, headers) {
   }
   return sh;
 }
-function tasksSheet_() { return sheet_(TASK_SHEET, TASK_HEADERS); }
-function logsSheet_()  { return sheet_(LOG_SHEET, LOG_HEADERS); }
+function tasksSheet_() {
+  var sh = sheet_(TASK_SHEET, TASK_HEADERS);
+  // 早期版本這欄叫「案場」，順手改成現在的名稱
+  if (sh.getLastRow() >= 1 && sh.getRange(1, COL.site + 1).getValue() === '案場') {
+    sh.getRange(1, COL.site + 1).setValue('分類');
+  }
+  return sh;
+}
+function logsSheet_()   { return sheet_(LOG_SHEET, LOG_HEADERS); }
+function repeatSheet_() { return sheet_(REPEAT_SHEET, REPEAT_HEADERS); }
 
 function rows_(sh) {
   var last = sh.getLastRow();
@@ -164,7 +183,8 @@ function logsByNo_() {
 /* ---------------- 動作 ---------------- */
 
 function listTasks_() {
-  purge_();
+  // 兩個人同時開板子時，不能重複產生或重複刪除
+  lock_(function () { purge_(); generateDue_(); });
   var logs = logsByNo_();
   var tasks = rows_(tasksSheet_()).map(function (r) {
     var status = r[COL.status] === DONE ? 'done' : (r[COL.status] === TRASH ? 'trash' : 'open');
@@ -186,7 +206,25 @@ function listTasks_() {
       logs: logs[String(r[COL.no])] || []
     };
   });
-  return { ok: true, tasks: tasks, trashDays: TRASH_DAYS };
+
+  var repeats = rows_(repeatSheet_())
+    .filter(function (r) { return r[RCOL.title]; })
+    .map(function (r) {
+      return {
+        id: String(r[RCOL.id]),
+        no: Number(r[RCOL.no]) || 0,
+        title: String(r[RCOL.title]),
+        site: String(r[RCOL.site] || ''),
+        desc: String(r[RCOL.desc] || ''),
+        freq: String(r[RCOL.freq]),
+        label: String(r[RCOL.label] || repeatLabel_(r[RCOL.freq], r[RCOL.param])),
+        next: stamp_(r[RCOL.next]),
+        by: String(r[RCOL.by] || ''),
+        status: String(r[RCOL.status] || '啟用')
+      };
+    });
+
+  return { ok: true, tasks: tasks, repeats: repeats, trashDays: TRASH_DAYS };
 }
 
 function addTask_(req, who) {
@@ -281,6 +319,138 @@ function restoreTask_(req, who) {
     log_(hit.values[COL.no], hit.values[COL.title], who, '還原', '');
     return { ok: true };
   });
+}
+
+/* ---------------- 重複設定 ---------------- */
+
+function dayStart_(d) { var x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function addDays_(d, n) { var x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function daysInMonth_(y, m) { return new Date(y, m + 1, 0).getDate(); }
+
+/** 從 from 當天算起（含當天），下一次符合這個規則的日期。 */
+function nextOccurrence_(freq, param, from) {
+  var start = dayStart_(from);
+
+  if (freq === '每天') return start;
+
+  if (freq === '每週') {
+    var target = Number(param) % 7;          // 1=週一 … 7=週日 → JS 的 1…6,0
+    var d = new Date(start);
+    for (var i = 0; i < 7; i++) {
+      if (d.getDay() === target) return d;
+      d = addDays_(d, 1);
+    }
+    return start;
+  }
+
+  if (freq === '每月') {
+    var want = Math.min(31, Math.max(1, Number(param) || 1));
+    var y = start.getFullYear(), m = start.getMonth();
+    for (var k = 0; k < 24; k++) {
+      // 31 號遇到只有 30 天的月份，就落在該月最後一天
+      var cand = new Date(y, m, Math.min(want, daysInMonth_(y, m)));
+      if (cand.getTime() >= start.getTime()) return cand;
+      m++;
+      if (m > 11) { m = 0; y++; }
+    }
+    return start;
+  }
+
+  if (freq === '每年') {
+    var p = String(param).split('-');
+    var mm = Math.min(12, Math.max(1, Number(p[0]) || 1)) - 1;
+    var dd = Math.max(1, Number(p[1]) || 1);
+    var yy = start.getFullYear();
+    for (var j = 0; j < 4; j++) {
+      var c = new Date(yy + j, mm, Math.min(dd, daysInMonth_(yy + j, mm)));
+      if (c.getTime() >= start.getTime()) return c;
+    }
+  }
+
+  return start;
+}
+
+function repeatLabel_(freq, param) {
+  var W = ['', '週一', '週二', '週三', '週四', '週五', '週六', '週日'];
+  if (freq === '每天') return '每天';
+  if (freq === '每週') return '每' + (W[Number(param)] || '週一');
+  if (freq === '每月') return '每月 ' + (Number(param) || 1) + ' 號';
+  if (freq === '每年') {
+    var p = String(param).split('-');
+    return '每年 ' + (Number(p[0]) || 1) + ' 月 ' + (Number(p[1]) || 1) + ' 日';
+  }
+  return String(freq);
+}
+
+function addRepeat_(req, who) {
+  return lock_(function () {
+    var title = String(req.title || '').slice(0, 120);
+    if (!title) throw new Error('先寫要做什麼');
+    var freq = String(req.freq || '');
+    if (FREQS.indexOf(freq) < 0) throw new Error('頻率設定不正確');
+
+    var param = String(req.param || '');
+    var sh = repeatSheet_();
+    var no = rows_(sh).reduce(function (m, r) { return Math.max(m, Number(r[RCOL.no]) || 0); }, 0) + 1;
+    var id = 'r' + new Date().getTime() + Math.random().toString(36).slice(2, 6);
+
+    sh.appendRow([no, title, String(req.site || '').slice(0, 60),
+                  String(req.desc || '').slice(0, 2000),
+                  freq, repeatLabel_(freq, param), param,
+                  nextOccurrence_(freq, param, new Date()),
+                  who, new Date(), '啟用', id]);
+    return { ok: true, id: id };
+  });
+}
+
+function delRepeat_(req, who) {
+  return lock_(function () {
+    var sh = repeatSheet_();
+    var data = rows_(sh);
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][RCOL.id]) === String(req.id)) {
+        sh.deleteRow(i + 2);
+        return { ok: true };
+      }
+    }
+    throw new Error('找不到這項重複設定');
+  });
+}
+
+/**
+ * 到期的重複設定會自動長出一件待辦。
+ * 若中間隔了好幾期沒人開板子，只補最近的一件，不會一次灌一堆進來。
+ */
+function generateDue_() {
+  var sh = repeatSheet_();
+  var data = rows_(sh);
+  if (!data.length) return;
+  var today = dayStart_(new Date());
+
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (!r[RCOL.title] || r[RCOL.status] === '停用') continue;
+
+    var next = r[RCOL.next] ? dayStart_(r[RCOL.next]) : null;
+    if (!next) {
+      sh.getRange(i + 2, RCOL.next + 1).setValue(nextOccurrence_(r[RCOL.freq], r[RCOL.param], today));
+      continue;
+    }
+    if (next.getTime() > today.getTime()) continue;
+
+    createFromRepeat_(r);
+    sh.getRange(i + 2, RCOL.next + 1)
+      .setValue(nextOccurrence_(r[RCOL.freq], r[RCOL.param], addDays_(today, 1)));
+  }
+}
+
+function createFromRepeat_(r) {
+  var sh = tasksSheet_();
+  var no = rows_(sh).reduce(function (m, x) { return Math.max(m, Number(x[COL.no]) || 0); }, 0) + 1;
+  var id = 't' + new Date().getTime() + Math.random().toString(36).slice(2, 6);
+  sh.appendRow([no, r[RCOL.title], r[RCOL.site], r[RCOL.desc], OPEN,
+                r[RCOL.by], new Date(), '', '', '', '', '', '', id]);
+  log_(no, r[RCOL.title], r[RCOL.by], '自動建立', '來自重複設定：' + r[RCOL.label]);
 }
 
 /**
