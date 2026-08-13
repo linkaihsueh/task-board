@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>群組待辦板</title>
+<style>
+  :root{
+    --paper:#E9EAE6; --slip:#FCFCFA; --ink:#191C1A; --mute:#82867F;
+    --line:#C9CBC4; --chop:#B7362B; --blue:#2B4257;
+    --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC",
+            "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;
+       line-height:1.5;-webkit-text-size-adjust:100%;padding-bottom:40px}
+  button{font-family:inherit;font-size:inherit;color:inherit;cursor:pointer}
+  input,textarea{font-family:inherit;font-size:16px;color:inherit}
+  :focus-visible{outline:2.5px solid var(--blue);outline-offset:2px}
+  [hidden]{display:none !important}
+
+  .board{max-width:560px;margin:0 auto;padding:0 14px}
+
+  .masthead{padding:22px 0 12px;display:flex;align-items:flex-start;gap:12px}
+  .masthead h1{margin:0;font-size:26px;font-weight:800;letter-spacing:-.02em}
+  .eyebrow{margin:0 0 4px;font-family:var(--mono);font-size:10px;letter-spacing:.22em;
+           text-transform:uppercase;color:var(--mute)}
+  .whoami{margin-left:auto;flex:none;background:transparent;border:1.5px solid var(--ink);
+          border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600;
+          max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .meter{display:flex;align-items:center;gap:18px;border-top:2px solid var(--ink);
+         border-bottom:1px solid var(--line);padding:8px 0;font-family:var(--mono);
+         font-size:11px;letter-spacing:.06em;color:var(--mute)}
+  .meter b{font-size:15px;color:var(--ink);letter-spacing:0}
+  .meter .sync{margin-left:auto;background:none;border:0;padding:4px;font-family:var(--mono);
+               font-size:11px;color:var(--mute);text-decoration:underline;text-underline-offset:3px}
+  .meter .sync.busy{text-decoration:none;opacity:.6}
+
+  .composer{margin:14px 0}
+  .add-toggle{width:100%;background:var(--ink);color:var(--paper);border:0;border-radius:3px;
+              padding:14px;font-size:16px;font-weight:700;display:flex;align-items:center;
+              justify-content:center;gap:8px}
+  .add-toggle .plus{font-family:var(--mono);font-size:18px;line-height:1}
+  .form{display:none;background:var(--slip);border:1.5px solid var(--ink);border-radius:3px;padding:14px}
+  .form.open{display:block}
+  .field{margin-bottom:10px}
+  .field label{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+               text-transform:uppercase;color:var(--mute);margin-bottom:5px}
+  .field input,.field textarea{width:100%;background:transparent;border:0;
+               border-bottom:1.5px solid var(--line);padding:7px 2px;border-radius:0}
+  .field input:focus,.field textarea:focus{outline:0;border-bottom-color:var(--blue)}
+  .field textarea{resize:vertical;min-height:52px;border:1.5px solid var(--line);padding:8px;border-radius:2px}
+  .form-actions{display:flex;gap:8px;margin-top:14px}
+  .btn{border:1.5px solid var(--ink);background:transparent;border-radius:3px;
+       padding:11px 14px;font-weight:700;flex:1}
+  .btn[disabled]{opacity:.45}
+  .btn-solid{background:var(--ink);color:var(--paper)}
+  .btn-quiet{border-color:var(--line);color:var(--mute);flex:0 0 auto;padding:11px 16px}
+  .btn-danger{border-color:var(--chop);color:var(--chop)}
+
+  .sec-label{display:flex;align-items:center;gap:10px;margin:22px 0 10px;font-family:var(--mono);
+             font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--mute)}
+  .sec-label::after{content:"";flex:1;height:1px;background:var(--line)}
+
+  .slip{display:flex;gap:12px;background:var(--slip);border:1.5px solid var(--ink);
+        border-radius:3px;padding:12px;margin-bottom:10px}
+  .tick{flex:none;width:30px;height:30px;margin-top:1px;background:transparent;
+        border:2.5px solid var(--ink);border-radius:3px;padding:0}
+  .tick:active{background:var(--line)}
+  .slip-body{flex:1;min-width:0;text-align:left;background:none;border:0;padding:0}
+  .slip-top{display:flex;align-items:baseline;gap:8px}
+  .no{font-family:var(--mono);font-size:11px;color:var(--mute);flex:none}
+  .title{font-size:17px;font-weight:700;line-height:1.35;word-break:break-word}
+  .site{display:inline-block;margin-top:6px;font-size:12px;font-weight:600;color:var(--blue);
+        border:1px solid var(--blue);border-radius:2px;padding:1px 6px}
+  .byline{margin-top:7px;font-family:var(--mono);font-size:11px;color:var(--mute)}
+
+  .done-head{width:100%;display:flex;align-items:center;gap:10px;background:transparent;border:0;
+             border-top:1px solid var(--line);padding:14px 0;font-family:var(--mono);font-size:11px;
+             letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
+  .done-head .caret{margin-left:auto;font-size:12px;transition:transform .18s ease}
+  .done-head[aria-expanded="true"] .caret{transform:rotate(180deg)}
+  .done-list{display:none}
+  .done-list.open{display:block}
+  .drow{width:100%;display:flex;align-items:center;gap:9px;text-align:left;background:transparent;
+        border:0;border-bottom:1px dashed var(--line);padding:11px 2px}
+  .drow .t{flex:1;min-width:0;font-size:15px;font-weight:600;color:var(--mute);
+           text-decoration:line-through;text-decoration-color:var(--line);
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .drow.trashed .t{text-decoration:none}
+  .drow .m{font-family:var(--mono);font-size:10px;color:var(--mute);flex:none}
+  .cam{flex:none;font-size:11px;color:var(--chop);font-weight:700}
+  .ttl{flex:none;font-family:var(--mono);font-size:10px;color:var(--chop);
+       border:1px solid var(--chop);border-radius:2px;padding:1px 4px}
+  .bin{flex:none;width:26px;height:26px;display:flex;align-items:center;justify-content:center;
+       border:1.5px dashed var(--mute);border-radius:3px;color:var(--mute);font-size:12px}
+
+  .chop{flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        width:72px;height:72px;border:2.5px solid var(--chop);border-radius:5px;color:var(--chop);
+        transform:rotate(-7deg);mix-blend-mode:multiply;box-shadow:inset 0 0 0 1px var(--chop);opacity:.9}
+  .chop b{font-size:20px;font-weight:800;letter-spacing:.1em;line-height:1.1}
+  .chop span{font-family:var(--mono);font-size:9px;line-height:1.3;margin-top:3px;text-align:center}
+  .chop-sm{width:26px;height:26px;border-width:1.5px;box-shadow:none;border-radius:3px}
+  .chop-sm b{font-size:11px;letter-spacing:0}
+  @keyframes stamp{0%{transform:rotate(-7deg) scale(2.1);opacity:0}
+                   60%{transform:rotate(-7deg) scale(.94);opacity:1}
+                   100%{transform:rotate(-7deg) scale(1);opacity:.9}}
+  .stamping{animation:stamp .34s cubic-bezier(.3,1.4,.5,1) both}
+
+  .empty{border:1.5px dashed var(--line);border-radius:3px;padding:26px 16px;
+         text-align:center;color:var(--mute);font-size:14px}
+
+  .scrim{position:fixed;inset:0;background:rgba(25,28,26,.45);z-index:40}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:41;max-height:88vh;overflow-y:auto;
+         background:var(--paper);border-top:2.5px solid var(--ink);border-radius:10px 10px 0 0;
+         padding:0 16px calc(20px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;
+         animation:rise .2s ease-out both}
+  @keyframes rise{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .sheet-head{position:sticky;top:0;background:var(--paper);padding:14px 0 10px;display:flex;
+              align-items:center;gap:10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+  .sheet-head h2{margin:0;font-size:15px;font-family:var(--mono);letter-spacing:.16em;
+                 text-transform:uppercase;color:var(--mute);font-weight:600}
+  .x{margin-left:auto;background:none;border:0;font-size:22px;line-height:1;padding:4px 6px;color:var(--mute)}
+  .d-title{font-size:21px;font-weight:800;line-height:1.35;word-break:break-word}
+  .d-desc{margin-top:10px;white-space:pre-wrap;font-size:15px}
+  .stamp-row{display:flex;align-items:center;gap:14px;margin:16px 0;padding:12px;
+             border:1px solid var(--line);border-radius:3px;background:var(--slip)}
+  .stamp-row .who{font-size:15px;font-weight:700}
+  .stamp-row .when{font-family:var(--mono);font-size:12px;color:var(--mute);margin-top:2px}
+  .photos{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  .photos img{width:100%;aspect-ratio:1;object-fit:cover;border:1px solid var(--ink);
+              border-radius:2px;display:block;background:var(--line)}
+  .photos button{padding:0;border:0;background:none}
+  .photos a{font-size:12px;color:var(--blue)}
+  .log{list-style:none;margin:0;padding:0;border-left:1.5px solid var(--line);margin-left:5px}
+  .log li{position:relative;padding:0 0 14px 16px}
+  .log li::before{content:"";position:absolute;left:-5.5px;top:6px;width:9px;height:9px;
+                  border-radius:50%;background:var(--ink)}
+  .log .lt{font-family:var(--mono);font-size:11px;color:var(--mute)}
+  .log .lb{font-size:14px}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .thumbs figure{position:relative;margin:0}
+  .thumbs img{width:74px;height:74px;object-fit:cover;border:1.5px solid var(--ink);
+              border-radius:2px;display:block}
+  .thumbs .rm{position:absolute;top:-8px;right:-8px;width:24px;height:24px;border-radius:50%;
+              background:var(--ink);color:var(--paper);border:0;font-size:14px;line-height:1;padding:0}
+  .filebtn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
+           border:1.5px dashed var(--ink);border-radius:3px;padding:16px;font-weight:700;background:transparent}
+  .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .actions .btn{flex:1 1 45%}
+
+  .gate{position:fixed;inset:0;z-index:60;background:var(--paper);display:flex;align-items:center;
+        justify-content:center;padding:24px}
+  .gate .inner{width:100%;max-width:360px}
+  .gate h2{margin:0 0 6px;font-size:22px}
+  .gate p{margin:0 0 18px;color:var(--mute);font-size:14px;line-height:1.7}
+  .gate code{font-family:var(--mono);font-size:12px;background:var(--slip);
+             border:1px solid var(--line);padding:1px 5px;border-radius:2px;word-break:break-all}
+
+  #lightbox{position:fixed;inset:0;z-index:70;background:rgba(25,28,26,.94);display:flex;
+            align-items:center;justify-content:center;padding:16px}
+  #lightbox img{max-width:100%;max-height:86vh;object-fit:contain}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+         background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:999px;font-size:14px;
+         font-weight:600;opacity:0;pointer-events:none;transition:all .22s ease;z-index:80;
+         max-width:88vw;text-align:center}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .footnote{margin-top:26px;font-size:12px;color:var(--mute);line-height:1.7;
+            border-top:1px solid var(--line);padding-top:12px}
+  @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
+</style>
+</head>
+<body>
+
+<div class="board" id="app" hidden>
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Shared Task Board</p>
+      <h1>群組待辦板</h1>
+    </div>
+    <button class="whoami" id="whoami">設定名字</button>
+  </header>
+
+  <div class="meter">
+    <span>待辦 <b id="mOpen">0</b></span>
+    <span>完工 <b id="mDone">0</b></span>
+    <button class="sync" id="sync">重新整理</button>
+  </div>
+
+  <section class="composer">
+    <button class="add-toggle" id="addToggle"><span class="plus">＋</span>新增待辦</button>
+    <div class="form" id="form">
+      <div class="field">
+        <label for="fTitle">要做什麼</label>
+        <input id="fTitle" type="text" placeholder="例：整理下週簡報" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="fSite">分類／地點（可留空）</label>
+        <input id="fSite" type="text" placeholder="例：行銷組" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="fDesc">說明（可留空）</label>
+        <textarea id="fDesc" placeholder="細節、聯絡人、注意事項…"></textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-solid" id="fSave">加入待辦</button>
+        <button class="btn btn-quiet" id="fCancel">取消</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="sec-label">待辦中</div>
+  <section id="openList"></section>
+
+  <section>
+    <button class="done-head" id="doneHead" aria-expanded="false">
+      已完工 <b id="doneCount" style="color:var(--ink)">0</b> 件
+      <span class="caret">▾</span>
+    </button>
+    <div class="done-list" id="doneList"></div>
+  </section>
+
+  <section id="trashSection" hidden>
+    <button class="done-head" id="trashHead" aria-expanded="false">
+      刪除區 <b id="trashCount" style="color:var(--ink)">0</b> 件
+      <span class="caret">▾</span>
+    </button>
+    <div class="done-list" id="trashList"></div>
+  </section>
+
+  <p class="footnote">
+    大家看到的是同一份清單。資料存在建立者的 Google 試算表裡，照片存在他的雲端硬碟。<br>
+    刪掉的東西會先進刪除區放 30 天，這段期間隨時可以還原，時間到才會真的消失。<br>
+    拿到連結的人都打得開，不要在上面放個資。
+  </p>
+</div>
+
+<div id="boot" class="gate"><div class="inner"><h2>載入中…</h2><p>正在連上待辦板。</p></div></div>
+<div id="toast"></div>
+
+<script src="config.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  var API = (typeof BOARD_API === 'string') ? BOARD_API.trim() : '';
+  var DAY = 86400000;
+  var TRASH_DAYS = 30;
+
+  var tasks = [];
+  var me = '';
+  var pass = '';
+  var overlayOpen = false;
+  var pending = [];
+  var busy = 0;
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function fmt(ts){ var d=new Date(ts); return (d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
+  function fmtFull(ts){ var d=new Date(ts); return d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
+  function whoami(){ return me || '（未署名）'; }
+  function toast(msg){
+    var t=$('toast'); t.textContent=msg; t.classList.add('show');
+    clearTimeout(toast._t); toast._t=setTimeout(function(){ t.classList.remove('show'); },2600);
+  }
+  function keep(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function recall(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+
+  function gate(title, html){
+    $('boot').hidden = false;
+    $('boot').innerHTML = '<div class="inner"><h2>'+esc(title)+'</h2>'+html+'</div>';
+  }
+
+  /* ---------- 後端 ---------- */
+  function markBusy(on){
+    busy += on ? 1 : -1;
+    var s = $('sync');
+    if(s){ s.classList.toggle('busy', busy > 0); s.textContent = busy > 0 ? '同步中…' : '重新整理'; }
+  }
+
+  function api(action, payload){
+    markBusy(true);
+    var body = { action: action, who: whoami(), pass: pass };
+    for(var k in (payload||{})){ body[k] = payload[k]; }
+    // text/plain 讓瀏覽器把它當簡單請求，避開 Apps Script 處理不了的預檢
+    return fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if(!d || !d.ok){
+        var err = new Error((d && d.error) || '後端沒有回應');
+        err.needPass = !!(d && d.needPass);
+        throw err;
+      }
+      return d;
+    }).catch(function(e){
+      if(e.needPass) throw e;
+      if(e instanceof TypeError) throw new Error('連不上後端，請檢查網路或 config.js 的網址');
+      throw e;
+    }).then(function(v){ markBusy(false); return v; },
+            function(e){ markBusy(false); throw e; });
+  }
+
+  function refresh(){
+    return api('list').then(function(d){
+      tasks = d.tasks || [];
+      if(d.trashDays) TRASH_DAYS = d.trashDays;
+      render();
+    });
+  }
+
+  /* ---------- 照片 ---------- */
+  function readFile(file){
+    return new Promise(function(res, rej){
+      var r=new FileReader();
+      r.onload=function(){ res(r.result); };
+      r.onerror=function(){ rej(new Error('讀不到這張照片')); };
+      r.readAsDataURL(file);
+    });
+  }
+  function shrink(file){
+    return readFile(file).then(function(url){
+      return new Promise(function(res, rej){
+        var img=new Image();
+        img.onload=function(){ res(img); };
+        img.onerror=function(){ rej(new Error('這個檔案不是照片')); };
+        img.src=url;
+      });
+    }).then(function(img){
+      var max=1400, w=img.width, h=img.height;
+      var s=Math.min(1, max/Math.max(w,h));
+      w=Math.max(1,Math.round(w*s)); h=Math.max(1,Math.round(h*s));
+      var c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      var q=0.72, out=c.toDataURL('image/jpeg',q);
+      while(out.length > 520*1024 && q > 0.32){ q-=0.1; out=c.toDataURL('image/jpeg',q); }
+      return out;
+    });
+  }
+
+  /* ---------- 畫面 ---------- */
+  function chopHTML(t, small){
+    if(small) return '<span class="chop chop-sm"><b>完</b></span>';
+    return '<span class="chop"><b>完工</b><span>'+esc(t.doneBy)+'<br>'+fmt(t.doneAt)+'</span></span>';
+  }
+  function slipHTML(t){
+    return '<article class="slip">'
+      + '<button class="tick" data-tick="'+t.id+'" aria-label="標記完工：'+esc(t.title)+'"></button>'
+      + '<button class="slip-body" data-open="'+t.id+'">'
+      + '<span class="slip-top"><span class="no">#'+pad(t.no)+'</span>'
+      + '<span class="title">'+esc(t.title)+'</span></span>'
+      + (t.site ? '<span class="site">'+esc(t.site)+'</span>' : '')
+      + '<div class="byline">'+esc(t.createdBy)+' · '+fmt(t.createdAt)+' 建立'
+      + (t.logs.length>1 ? ' · 紀錄 '+t.logs.length : '')+'</div>'
+      + '</button></article>';
+  }
+  function doneRowHTML(t){
+    return '<button class="drow" data-open="'+t.id+'">'
+      + chopHTML(t, true)
+      + '<span class="t">'+esc(t.title)+'</span>'
+      + (t.photos.length ? '<span class="cam">照 '+t.photos.length+'</span>' : '')
+      + '<span class="m">'+esc(t.doneBy)+' '+fmt(t.doneAt)+'</span></button>';
+  }
+  function daysLeft(t){
+    return Math.max(0, Math.ceil((t.deletedAt + TRASH_DAYS*DAY - Date.now()) / DAY));
+  }
+  function trashRowHTML(t){
+    var d = daysLeft(t);
+    return '<button class="drow trashed" data-open="'+t.id+'">'
+      + '<span class="bin">✕</span>'
+      + '<span class="t">'+esc(t.title)+'</span>'
+      + '<span class="ttl">'+(d>0 ? d+' 天' : '今天')+'</span>'
+      + '<span class="m">'+esc(t.deletedBy||'')+'</span></button>';
+  }
+
+  function render(){
+    var open = tasks.filter(function(t){ return t.status==='open'; })
+                    .sort(function(a,b){ return b.createdAt-a.createdAt; });
+    var done = tasks.filter(function(t){ return t.status==='done'; })
+                    .sort(function(a,b){ return b.doneAt-a.doneAt; });
+    var trash = tasks.filter(function(t){ return t.status==='trash'; })
+                     .sort(function(a,b){ return b.deletedAt-a.deletedAt; });
+
+    $('mOpen').textContent = open.length;
+    $('mDone').textContent = done.length;
+    $('doneCount').textContent = done.length;
+    $('trashCount').textContent = trash.length;
+    $('trashSection').hidden = trash.length === 0;
+
+    $('openList').innerHTML = open.length ? open.map(slipHTML).join('')
+      : '<div class="empty">目前沒有待辦。<br>按上面「新增待辦」開一件。</div>';
+    $('doneList').innerHTML = done.length ? done.map(doneRowHTML).join('')
+      : '<div class="empty">還沒有完工的項目。</div>';
+    $('trashList').innerHTML = trash.map(trashRowHTML).join('');
+  }
+
+  function byId(id){
+    for(var i=0;i<tasks.length;i++){ if(tasks[i].id===id) return tasks[i]; }
+    return null;
+  }
+
+  /* ---------- 彈出層 ---------- */
+  function closeOverlay(){
+    var s=$('scrim'), sh=$('sheet');
+    if(s) s.remove();
+    if(sh) sh.remove();
+    overlayOpen=false;
+  }
+  function openSheet(head, bodyHTML){
+    closeOverlay();
+    var scrim=document.createElement('div');
+    scrim.className='scrim'; scrim.id='scrim';
+    scrim.addEventListener('click', closeOverlay);
+    var sheet=document.createElement('div');
+    sheet.className='sheet'; sheet.id='sheet';
+    sheet.innerHTML='<div class="sheet-head"><h2>'+esc(head)+'</h2>'
+      +'<button class="x" data-close="1" aria-label="關閉">×</button></div>'+bodyHTML;
+    document.body.appendChild(scrim);
+    document.body.appendChild(sheet);
+    overlayOpen=true;
+    return sheet;
+  }
+
+  function drawThumbs(sheet){
+    var box=sheet.querySelector('#thumbs');
+    box.innerHTML = pending.map(function(u,i){
+      return '<figure><img src="'+u+'" alt="完工照 '+(i+1)+'">'
+        +'<button class="rm" data-rm="'+i+'" aria-label="移除這張">×</button></figure>';
+    }).join('');
+    box.querySelectorAll('[data-rm]').forEach(function(b){
+      b.addEventListener('click', function(){
+        pending.splice(parseInt(b.getAttribute('data-rm'),10),1);
+        drawThumbs(sheet);
+      });
+    });
+  }
+
+  function askComplete(id){
+    var t=byId(id);
+    if(!t) return;
+    pending=[];
+    var sheet=openSheet('標記完工',
+        '<div class="d-title">'+esc(t.title)+'</div>'
+      + (t.site?'<span class="site">'+esc(t.site)+'</span>':'')
+      + '<div class="sec-label" style="margin-top:18px">完工照</div>'
+      + '<button class="filebtn" id="pick">＋ 拍照或選照片</button>'
+      + '<input type="file" id="file" accept="image/*" multiple hidden>'
+      + '<div class="thumbs" id="thumbs"></div>'
+      + '<div class="field" style="margin-top:18px"><label for="cNote">完工備註（可留空）</label>'
+      + '<textarea id="cNote" placeholder="做了什麼、還有什麼要追蹤…"></textarea></div>'
+      + '<div class="actions"><button class="btn btn-solid" id="cGo">確認完工</button>'
+      + '<button class="btn btn-quiet" data-close="1">先不要</button></div>');
+
+    var file=sheet.querySelector('#file');
+    sheet.querySelector('#pick').addEventListener('click', function(){ file.click(); });
+    file.addEventListener('change', function(){
+      var files=Array.prototype.slice.call(file.files||[]);
+      file.value='';
+      if(!files.length) return;
+      if(pending.length+files.length>6){
+        toast('一次最多 6 張');
+        files=files.slice(0, Math.max(0, 6-pending.length));
+      }
+      toast('照片處理中…');
+      Promise.all(files.map(shrink)).then(function(list){
+        pending=pending.concat(list);
+        drawThumbs(sheet);
+      }).catch(function(e){ toast(e.message||'照片處理失敗'); });
+    });
+
+    sheet.querySelector('#cGo').addEventListener('click', function(){
+      var btn=this;
+      btn.disabled=true; btn.textContent='上傳中…';
+      api('done', { id:id, note: sheet.querySelector('#cNote').value.trim(), photos: pending })
+        .then(function(){ pending=[]; return refresh(); })
+        .then(function(){
+          closeOverlay();
+          var head=$('doneHead');
+          if(head.getAttribute('aria-expanded')!=='true') head.click();
+          var first=$('doneList').querySelector('.chop-sm');
+          if(first) first.classList.add('stamping');
+          toast('已完工');
+        })
+        .catch(function(e){ btn.disabled=false; btn.textContent='確認完工'; toast(e.message); });
+    });
+  }
+
+  function openDetail(id){
+    var t=byId(id);
+    if(!t) return;
+    var body='<div class="d-title"><span class="no">#'+pad(t.no)+'</span> '+esc(t.title)+'</div>'
+      + (t.site?'<span class="site">'+esc(t.site)+'</span>':'')
+      + (t.desc?'<div class="d-desc">'+esc(t.desc)+'</div>':'');
+
+    if(t.status==='done'){
+      body += '<div class="stamp-row">'+chopHTML(t,false)
+        + '<div><div class="who">'+esc(t.doneBy)+' 勾選完工</div>'
+        + '<div class="when">'+fmtFull(t.doneAt)+'</div>'
+        + (t.doneNote?'<div style="margin-top:6px;font-size:14px">'+esc(t.doneNote)+'</div>':'')
+        + '</div></div>';
+    }
+
+    body += '<div class="sec-label">完工照 '+t.photos.length+'</div><div class="photos">'
+      + (t.photos.length
+          ? t.photos.map(function(p,i){
+              return '<button data-zoom="'+esc(p.url)+'">'
+                + '<img src="'+esc(p.thumb)+'" alt="完工照 '+(i+1)+'" loading="lazy" '
+                + 'onerror="this.parentNode.innerHTML=\'<a href=&quot;'+esc(p.open)+'&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>開啟照片</a>\'">'
+                + '</button>';
+            }).join('')
+          : '<span style="color:var(--mute);font-size:13px">尚未上傳照片。</span>')
+      + '</div>';
+
+    body += '<div class="sec-label">案件紀錄</div><ul class="log">'
+      + t.logs.slice().sort(function(a,b){ return a.at-b.at; }).map(function(l){
+          return '<li><div class="lt">'+fmtFull(l.at)+'</div><div class="lb"><b>'+esc(l.who)+'</b> '
+            + esc(l.action) + (l.text?'：'+esc(l.text):'')+'</div></li>';
+        }).join('')
+      + '</ul>';
+
+    if(t.status==='trash'){
+      body += '<div class="actions"><button class="btn btn-solid" id="restore">還原這件</button></div>';
+    } else {
+      body += '<div class="field" style="margin-top:6px"><label for="nNote">加一筆紀錄</label>'
+        + '<textarea id="nNote" placeholder="進度、追加事項、對方回覆…"></textarea>'
+        + '<button class="btn" id="nGo" style="margin-top:8px">加入紀錄</button></div>'
+        + '<div class="actions"><button class="btn" id="addPhoto">＋ 補上照片</button>'
+        + (t.status==='done' ? '<button class="btn" id="reopen">退回待辦</button>'
+                             : '<button class="btn btn-solid" id="markDone">標記完工</button>')
+        + '<button class="btn btn-danger" id="del">移到刪除區</button></div>'
+        + '<input type="file" id="file2" accept="image/*" multiple hidden>';
+    }
+
+    var head = t.status==='trash' ? ('刪除區 · 剩 '+daysLeft(t)+' 天')
+                                  : (t.status==='done' ? '已完工' : '待辦中');
+    var sheet=openSheet(head, body);
+
+    sheet.querySelectorAll('[data-zoom]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var box=document.createElement('div');
+        box.id='lightbox';
+        box.innerHTML='<img src="'+esc(b.getAttribute('data-zoom'))+'" alt="完工照放大">';
+        box.addEventListener('click', function(){ box.remove(); });
+        document.body.appendChild(box);
+      });
+    });
+
+    var rs=sheet.querySelector('#restore');
+    if(rs) rs.addEventListener('click', function(){
+      this.disabled=true;
+      api('restore',{id:id}).then(refresh).then(function(){ closeOverlay(); toast('已還原'); })
+        .catch(function(e){ toast(e.message); });
+    });
+
+    if(t.status==='trash') return;
+
+    sheet.querySelector('#nGo').addEventListener('click', function(){
+      var v=sheet.querySelector('#nNote').value.trim();
+      if(!v){ toast('先寫點東西'); return; }
+      this.disabled=true;
+      api('note',{id:id, text:v}).then(refresh).then(function(){ openDetail(id); toast('已加入紀錄'); })
+        .catch(function(e){ toast(e.message); });
+    });
+
+    var f2=sheet.querySelector('#file2');
+    sheet.querySelector('#addPhoto').addEventListener('click', function(){ f2.click(); });
+    f2.addEventListener('change', function(){
+      var files=Array.prototype.slice.call(f2.files||[]).slice(0,6);
+      f2.value='';
+      if(!files.length) return;
+      toast('照片處理中…');
+      Promise.all(files.map(shrink))
+        .then(function(list){ return api('photos',{id:id, photos:list}); })
+        .then(refresh).then(function(){ openDetail(id); toast('照片已上傳'); })
+        .catch(function(e){ toast(e.message||'照片上傳失敗'); });
+    });
+
+    var md=sheet.querySelector('#markDone');
+    if(md) md.addEventListener('click', function(){ askComplete(id); });
+
+    var ro=sheet.querySelector('#reopen');
+    if(ro) ro.addEventListener('click', function(){
+      this.disabled=true;
+      api('reopen',{id:id}).then(refresh).then(function(){ closeOverlay(); toast('已退回待辦'); })
+        .catch(function(e){ toast(e.message); });
+    });
+
+    sheet.querySelector('#del').addEventListener('click', function(){
+      if(!confirm('把「'+t.title+'」移到刪除區？\n\n30 天內都可以還原，時間到才會真的刪掉。')) return;
+      this.disabled=true;
+      api('trash',{id:id}).then(refresh).then(function(){
+        closeOverlay();
+        var th=$('trashHead');
+        if(th.getAttribute('aria-expanded')!=='true') th.click();
+        toast('已移到刪除區，30 天內可還原');
+      }).catch(function(e){ toast(e.message); });
+    });
+  }
+
+  /* ---------- 名字與通行碼 ---------- */
+  function askName(first){
+    var g=document.createElement('div');
+    g.className='gate';
+    g.innerHTML='<div class="inner"><h2>'+(first?'你是誰？':'改個名字')+'</h2>'
+      +'<p>名字會記在每一筆待辦和完工紀錄上，讓大家知道是誰做的。</p>'
+      +'<div class="field"><label for="gName">顯示名稱</label>'
+      +'<input id="gName" type="text" maxlength="12" placeholder="例：王大明" value="'+esc(me)+'"></div>'
+      +'<div class="form-actions"><button class="btn btn-solid" id="gGo">開始使用</button>'
+      +(first?'':'<button class="btn btn-quiet" id="gCancel">取消</button>')+'</div></div>';
+    document.body.appendChild(g);
+    var input=g.querySelector('#gName');
+    setTimeout(function(){ input.focus(); },60);
+    function save(){
+      var v=input.value.trim();
+      if(!v){ toast('先輸入名字'); return; }
+      me=v.slice(0,12);
+      keep('boardName', me);
+      $('whoami').textContent='我是 '+me;
+      g.remove();
+    }
+    g.querySelector('#gGo').addEventListener('click', save);
+    input.addEventListener('keydown', function(e){ if(e.key==='Enter') save(); });
+    var c=g.querySelector('#gCancel');
+    if(c) c.addEventListener('click', function(){ g.remove(); });
+  }
+
+  function askPass(){
+    return new Promise(function(res){
+      var g=document.createElement('div');
+      g.className='gate';
+      g.innerHTML='<div class="inner"><h2>需要通行碼</h2>'
+        +'<p>這塊板子有設通行碼，跟建立的人要一下就好。</p>'
+        +'<div class="field"><label for="gPass">通行碼</label>'
+        +'<input id="gPass" type="password" autocomplete="off"></div>'
+        +'<div class="form-actions"><button class="btn btn-solid" id="pGo">進入</button></div></div>';
+      document.body.appendChild(g);
+      var input=g.querySelector('#gPass');
+      setTimeout(function(){ input.focus(); },60);
+      function go(){
+        pass=input.value.trim();
+        keep('boardPass', pass);
+        g.remove();
+        res();
+      }
+      g.querySelector('#pGo').addEventListener('click', go);
+      input.addEventListener('keydown', function(e){ if(e.key==='Enter') go(); });
+    });
+  }
+
+  /* ---------- 綁定 ---------- */
+  function addTask(){
+    var title=$('fTitle').value.trim();
+    if(!title){ toast('先寫要做什麼'); return; }
+    var btn=$('fSave');
+    btn.disabled=true;
+    api('add',{ title:title, site:$('fSite').value.trim(), desc:$('fDesc').value.trim() })
+      .then(refresh).then(function(){
+        $('fTitle').value=''; $('fSite').value=''; $('fDesc').value='';
+        $('form').classList.remove('open');
+        toast('已加入待辦');
+      })
+      .catch(function(e){ toast(e.message); })
+      .then(function(){ btn.disabled=false; });
+  }
+
+  $('addToggle').addEventListener('click', function(){
+    var f=$('form');
+    f.classList.toggle('open');
+    if(f.classList.contains('open')) $('fTitle').focus();
+  });
+  $('fCancel').addEventListener('click', function(){ $('form').classList.remove('open'); });
+  $('fSave').addEventListener('click', addTask);
+  $('fTitle').addEventListener('keydown', function(e){ if(e.key==='Enter') addTask(); });
+  $('doneHead').addEventListener('click', function(){
+    var exp=this.getAttribute('aria-expanded')==='true';
+    this.setAttribute('aria-expanded', exp?'false':'true');
+    $('doneList').classList.toggle('open', !exp);
+  });
+  $('trashHead').addEventListener('click', function(){
+    var exp=this.getAttribute('aria-expanded')==='true';
+    this.setAttribute('aria-expanded', exp?'false':'true');
+    $('trashList').classList.toggle('open', !exp);
+  });
+  $('whoami').addEventListener('click', function(){ askName(false); });
+  $('sync').addEventListener('click', function(){
+    refresh().then(function(){ toast('已更新'); }).catch(function(e){ toast(e.message); });
+  });
+
+  document.addEventListener('click', function(e){
+    var el=e.target.closest ? e.target.closest('[data-tick],[data-open],[data-close]') : null;
+    if(!el) return;
+    if(el.hasAttribute('data-close')) return closeOverlay();
+    if(el.hasAttribute('data-tick')) return askComplete(el.getAttribute('data-tick'));
+    if(el.hasAttribute('data-open')) return openDetail(el.getAttribute('data-open'));
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key==='Escape' && overlayOpen) closeOverlay();
+  });
+
+  setInterval(function(){
+    if(document.hidden || overlayOpen || busy > 0) return;
+    refresh().catch(function(){});
+  }, 30000);
+
+  /* ---------- 啟動 ---------- */
+  if(!API){
+    gate('還差一步', '<p>這個板子還不知道要去哪裡存資料。<br><br>'
+      + '請打開 <code>config.js</code>，把你的 Google Apps Script 網址填進去，存檔後重新整理這一頁。</p>');
+    return;
+  }
+
+  me = recall('boardName');
+  pass = recall('boardPass');
+
+  (function start(){
+    refresh().then(function(){
+      $('boot').hidden = true;
+      $('app').hidden = false;
+      if(me){ $('whoami').textContent = '我是 '+me; }
+      else { askName(true); }
+    }).catch(function(e){
+      if(e.needPass){ return askPass().then(start); }
+      gate('打不開待辦板', '<p>'+esc(e.message)+'</p>');
+    });
+  })();
+
+})();
+</script>
+</body>
+</html>
