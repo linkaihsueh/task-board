@@ -639,6 +639,49 @@
     if(first) first.classList.add('stamping');
   }
 
+  function openEdit(id){
+    var t = byId(id);
+    if(!t) return;
+    var sheet = openSheet('編輯待辦',
+        '<div class="field"><label for="eTitle">要做什麼</label>'
+      + '<input id="eTitle" type="text" autocomplete="off"></div>'
+      + '<div class="field"><label for="eSite">分類（可留空）</label>'
+      + '<input id="eSite" type="text" autocomplete="off"></div>'
+      + '<div class="field"><label for="eDesc">說明（可留空）</label>'
+      + '<textarea id="eDesc"></textarea></div>'
+      + '<p class="hint">改了什麼會記在案件紀錄裡，包含被蓋掉的舊內容。</p>'
+      + '<div class="actions"><button class="btn btn-solid" id="eSave">儲存修改</button>'
+      + '<button class="btn btn-quiet" data-close="1">取消</button></div>');
+
+    var ti = sheet.querySelector('#eTitle');
+    var si = sheet.querySelector('#eSite');
+    var di = sheet.querySelector('#eDesc');
+    ti.value = t.title;
+    si.value = t.site || '';
+    di.value = t.desc || '';
+
+    function sync(){ sheet.querySelector('#eSave').disabled = !ti.value.trim(); }
+    ti.addEventListener('input', sync);
+    sync();
+
+    sheet.querySelector('#eSave').addEventListener('click', function(){
+      var title = ti.value.trim(), site = si.value.trim(), desc = di.value.trim();
+      if(!title){ toast('標題不能空白'); return; }
+      if(title === t.title && site === (t.site||'') && desc === (t.desc||'')){
+        closeOverlay(); openDetail(id);
+        return;
+      }
+      closeOverlay();
+      act('edit', { id:id, title:title, site:site, desc:desc }, function(){
+        patch(id, {
+          title: title, site: site, desc: desc,
+          logs: byId(id).logs.concat([{ at:Date.now(), who:whoami(), action:'修改', text:'儲存中…' }])
+        });
+      }).then(function(){ openDetail(id); toast('已更新'); })
+        .catch(function(e){ toast(e.message); });
+    });
+  }
+
   function openDetail(id){
     var t=byId(id);
     if(!t) return;
@@ -678,7 +721,8 @@
       body += '<div class="field" style="margin-top:6px"><label for="nNote">加一筆紀錄</label>'
         + '<textarea id="nNote" placeholder="進度、追加事項、對方回覆…"></textarea>'
         + '<button class="btn" id="nGo" style="margin-top:8px">加入紀錄</button></div>'
-        + '<div class="actions"><button class="btn" id="addPhoto">＋ 補上照片</button>'
+        + '<div class="actions"><button class="btn" id="edit">編輯內容</button>'
+        + '<button class="btn" id="addPhoto">＋ 補上照片</button>'
         + (t.status==='done' ? '<button class="btn" id="reopen">退回待辦</button>'
                              : '<button class="btn btn-solid" id="markDone">標記完工</button>')
         + '<button class="btn btn-danger" id="del">移到刪除區</button></div>'
@@ -734,6 +778,8 @@
         .catch(function(e){ toast(e.message||'照片上傳失敗'); });
     });
 
+    sheet.querySelector('#edit').addEventListener('click', function(){ openEdit(id); });
+
     var md=sheet.querySelector('#markDone');
     if(md) md.addEventListener('click', function(){ askComplete(id); });
 
@@ -781,7 +827,9 @@
       g.remove();
     }
     g.querySelector('#gGo').addEventListener('click', save);
-    input.addEventListener('keydown', function(e){ if(e.key==='Enter') save(); });
+    input.addEventListener('keydown', function(e){
+      if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) save();
+    });
     var c=g.querySelector('#gCancel');
     if(c) c.addEventListener('click', function(){ g.remove(); });
   }
@@ -805,7 +853,9 @@
         res();
       }
       g.querySelector('#pGo').addEventListener('click', go);
-      input.addEventListener('keydown', function(e){ if(e.key==='Enter') go(); });
+      input.addEventListener('keydown', function(e){
+        if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) go();
+      });
     });
   }
 
@@ -904,9 +954,7 @@
   });
   $('fSave').addEventListener('click', addTask);
   $('fTitle').addEventListener('input', syncSaveState);
-  $('fTitle').addEventListener('keydown', function(e){
-    if(e.key==='Enter' && $('fTitle').value.trim()) addTask();
-  });
+  // 不綁 Enter：中文輸入法按 Enter 是要選字，不是要送出
   $('repeatHead').addEventListener('click', function(){
     var exp=this.getAttribute('aria-expanded')==='true';
     this.setAttribute('aria-expanded', exp?'false':'true');

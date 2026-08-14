@@ -42,6 +42,7 @@ function doGet(e) {
 
 var WRITES = {
   add:       function (q, w) { return addTask_(q, w); },
+  edit:      function (q, w) { return editTask_(q, w); },
   done:      function (q, w) { return finishTask_(q, w); },
   photos:    function (q, w) { return addPhotos_(q, w); },
   note:      function (q, w) { return addNote_(q, w); },
@@ -319,6 +320,43 @@ function addNote_(req, who) {
   return lock_(function () {
     var hit = findRow_(tasksSheet_(), req.id);
     log_(hit.values[COL.no], hit.values[COL.title], who, '留言', text);
+    return { ok: true };
+  });
+}
+
+function short_(s, n) {
+  s = String(s == null ? '' : s);
+  if (!s) return '（空白）';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+/**
+ * 修改待辦內容。改了什麼一定寫進紀錄，包含被覆蓋掉的舊值，
+ * 這樣事後翻紀錄才知道原本寫的是什麼。
+ */
+function editTask_(req, who) {
+  return lock_(function () {
+    var sh = tasksSheet_();
+    var hit = findRow_(sh, req.id);
+
+    var title = String(req.title || '').trim().slice(0, 120);
+    if (!title) throw new Error('標題不能空白');
+    var site = String(req.site || '').trim().slice(0, 60);
+    var desc = String(req.desc || '').trim().slice(0, 2000);
+
+    var oldTitle = String(hit.values[COL.title] || '');
+    var oldSite = String(hit.values[COL.site] || '');
+    var oldDesc = String(hit.values[COL.desc] || '');
+
+    var changes = [];
+    if (title !== oldTitle) changes.push('標題：' + short_(oldTitle, 20) + ' → ' + short_(title, 20));
+    if (site !== oldSite) changes.push('分類：' + short_(oldSite, 15) + ' → ' + short_(site, 15));
+    if (desc !== oldDesc) changes.push('說明改過（原本：' + short_(oldDesc, 30) + '）');
+    if (!changes.length) return { ok: true };
+
+    // 標題、分類、說明剛好是相鄰三欄，一次寫完
+    sh.getRange(hit.row, COL.title + 1, 1, 3).setValues([[title, site, desc]]);
+    log_(hit.values[COL.no], title, who, '修改', changes.join('；'));
     return { ok: true };
   });
 }
