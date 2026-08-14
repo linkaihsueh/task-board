@@ -178,12 +178,35 @@ function log_(no, title, who, action, text) {
   logsSheet_().appendRow([new Date(), no, title, who, action, text || '']);
 }
 
-function logsByNo_() {
+function logsByNo_(logRows) {
   var out = {};
-  rows_(logsSheet_()).forEach(function (r) {
+  logRows.forEach(function (r) {
     var no = String(r[1]);
     (out[no] = out[no] || []).push({ at: stamp_(r[0]), who: r[3], action: r[4], text: r[5] });
   });
+  return out;
+}
+
+/**
+ * 這塊板子上出現過的人，最近用過的排前面。
+ * 手機的內建瀏覽器常常把本機記憶清掉，有這份名單就能一鍵選回自己，不必重打。
+ */
+function knownPeople_(taskRows, logRows) {
+  var all = [];
+  logRows.forEach(function (r) { all.push({ who: String(r[3] || ''), at: stamp_(r[0]) }); });
+  taskRows.forEach(function (r) {
+    if (r[COL.createdBy]) all.push({ who: String(r[COL.createdBy]), at: stamp_(r[COL.createdAt]) });
+    if (r[COL.doneBy]) all.push({ who: String(r[COL.doneBy]), at: stamp_(r[COL.doneAt]) });
+  });
+  all.sort(function (a, b) { return b.at - a.at; });
+
+  var seen = {}, out = [];
+  for (var i = 0; i < all.length && out.length < 12; i++) {
+    var n = String(all[i].who || '').trim();
+    if (!n || n === '（未署名）' || seen[n]) continue;
+    seen[n] = true;
+    out.push(n);
+  }
   return out;
 }
 
@@ -222,8 +245,10 @@ function sameDay_(a, b) {
 
 function listTasks_(force) {
   maybeMaintain_(force);
-  var logs = logsByNo_();
-  var tasks = rows_(tasksSheet_()).map(function (r) {
+  var logRows = rows_(logsSheet_());
+  var taskRows = rows_(tasksSheet_());
+  var logs = logsByNo_(logRows);
+  var tasks = taskRows.map(function (r) {
     var status = r[COL.status] === DONE ? 'done' : (r[COL.status] === TRASH ? 'trash' : 'open');
     return {
       id: String(r[COL.id]),
@@ -261,7 +286,8 @@ function listTasks_(force) {
       };
     });
 
-  return { ok: true, tasks: tasks, repeats: repeats, trashDays: TRASH_DAYS };
+  return { ok: true, tasks: tasks, repeats: repeats,
+           people: knownPeople_(taskRows, logRows), trashDays: TRASH_DAYS };
 }
 
 function addTask_(req, who) {

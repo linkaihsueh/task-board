@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E9EAE6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="待辦板">
 <title>群組待辦板</title>
 <style>
   :root{
@@ -179,6 +184,22 @@
   .gate p{margin:0 0 18px;color:var(--mute);font-size:14px;line-height:1.7}
   .gate code{font-family:var(--mono);font-size:12px;background:var(--slip);
              border:1px solid var(--line);padding:1px 5px;border-radius:2px;word-break:break-all}
+  .people{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .people button{border:2px solid var(--ink);background:transparent;border-radius:999px;
+                 padding:10px 18px;font-weight:700;font-size:16px}
+  .people button:active{background:var(--ink);color:var(--paper)}
+  .or{margin:0 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.16em;
+      text-transform:uppercase;color:var(--mute)}
+  .tip{margin:16px 0 0;font-size:13px;color:var(--mute);line-height:1.7}
+  .tip button{background:none;border:0;padding:0;color:var(--blue);font-size:13px;font-weight:700;
+              text-decoration:underline;text-underline-offset:3px}
+  .guide .inner{max-width:400px;max-height:88vh;overflow-y:auto}
+  .guide h2{margin-bottom:12px}
+  .guide p{margin:0 0 14px;color:var(--ink);font-size:15px;line-height:1.75;text-align:left}
+  .guide .hint{color:var(--mute);font-size:13px}
+  .guide .sec-label{margin:18px 0 8px}
+  .steps{margin:0 0 14px;padding-left:22px;font-size:15px;line-height:1.9;text-align:left}
+  .steps li{margin-bottom:4px}
 
   #lightbox{position:fixed;inset:0;z-index:70;background:rgba(25,28,26,.94);display:flex;
             align-items:center;justify-content:center;padding:16px}
@@ -291,7 +312,8 @@
   <p class="footnote">
     大家看到的是同一份清單。資料存在建立者的 Google 試算表裡，照片存在他的雲端硬碟。<br>
     刪掉的東西會先進刪除區放 30 天，這段期間隨時可以還原，時間到才會真的消失。<br>
-    拿到連結的人都打得開，不要在上面放個資。
+    拿到連結的人都打得開，不要在上面放個資。<br>
+    <button id="howto">名字每次都不見？把板子加到主畫面</button>
   </p>
 </div>
 
@@ -309,6 +331,7 @@
 
   var tasks = [];
   var repeats = [];
+  var people = [];
   var me = '';
   var pass = '';
   var overlayOpen = false;
@@ -330,8 +353,19 @@
     var t=$('toast'); t.textContent=msg; t.classList.add('show');
     clearTimeout(toast._t); toast._t=setTimeout(function(){ t.classList.remove('show'); },2600);
   }
-  function keep(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
-  function recall(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+  // 手機內建瀏覽器常把 localStorage 清掉，cookie 多一層機會活下來
+  function keep(k,v){
+    try{ localStorage.setItem(k,v); }catch(e){}
+    try{ document.cookie = k+'='+encodeURIComponent(v)+';path=/;max-age=31536000;SameSite=Lax'; }catch(e){}
+  }
+  function recall(k){
+    try{ var v = localStorage.getItem(k); if(v) return v; }catch(e){}
+    try{
+      var m = document.cookie.match('(?:^|; )'+k+'=([^;]*)');
+      if(m) return decodeURIComponent(m[1]);
+    }catch(e){}
+    return '';
+  }
 
   function gate(title, html){
     $('boot').hidden = false;
@@ -373,6 +407,7 @@
     if(!d || !d.tasks) return d;
     tasks = d.tasks;
     repeats = d.repeats || [];
+    people = d.people || [];
     if(d.trashDays) TRASH_DAYS = d.trashDays;
     render();
     return d;
@@ -806,32 +841,131 @@
   }
 
   /* ---------- 名字與通行碼 ---------- */
+  /* ---------- 加到主畫面的指引 ---------- */
+  function env(){
+    var ua = navigator.userAgent || '';
+    return {
+      inApp: /\bLine\//i.test(ua) || /FBAN|FBAV/i.test(ua) || /Instagram/i.test(ua),
+      appName: /\bLine\//i.test(ua) ? 'LINE' : (/Instagram/i.test(ua) ? 'Instagram'
+               : (/FBAN|FBAV/i.test(ua) ? 'Facebook' : '這個 App')),
+      ios: /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1),
+      android: /Android/i.test(ua),
+      installed: window.navigator.standalone === true ||
+                 (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+    };
+  }
+
+  function openGuide(){
+    var e = env();
+    var body;
+
+    if(e.installed){
+      body = '<p>這個板子已經是從主畫面開的了，名字會一直記著，不用再設定。</p>';
+    } else {
+      var addSteps = e.android
+        ? '<li><b>點右上角的「⋮」</b>（三個點）</li>'
+          + '<li>選<b>「加到主畫面」</b>或<b>「安裝應用程式」</b></li>'
+          + '<li>按<b>「新增」</b>確認</li>'
+        : e.ios
+        ? '<li><b>點畫面正下方的分享鈕</b>（方框加一個向上的箭頭）</li>'
+          + '<li>往下滑，找到<b>「加入主畫面」</b></li>'
+          + '<li>按右上角<b>「新增」</b></li>'
+        : '<li>在手機瀏覽器打開這一頁</li>'
+          + '<li>iPhone：點下方分享鈕 →「加入主畫面」<br>Android：點右上角「⋮」→「加到主畫面」</li>';
+
+      body = e.inApp
+        ? '<p>你現在是在 <b>' + esc(e.appName) + ' 的內建瀏覽器</b>裡看這一頁。'
+          + '這種瀏覽器會把記住的名字清掉，也沒辦法直接加到主畫面，所以要先換一個瀏覽器。</p>'
+          + '<div class="sec-label">第一步 · 換到正常瀏覽器</div>'
+          + '<ol class="steps"><li>點畫面角落的<b>「⋯」</b>選單</li>'
+          + '<li>選<b>「用其他瀏覽器開啟」</b>（或「在 Safari 中開啟」）</li></ol>'
+          + '<p class="hint">找不到那個選項的話，按下面的「複製網址」，再自己貼到 Safari 或 Chrome。</p>'
+          + '<div class="sec-label">第二步 · 加到主畫面</div>'
+          + '<ol class="steps">' + addSteps + '</ol>'
+        : '<p>把板子放到主畫面之後，名字就會一直記著，不用每次回 LINE 找連結。</p>'
+          + '<ol class="steps">' + addSteps + '</ol>';
+
+      body += '<p>之後從主畫面的圖示打開就好，用起來跟一般 App 一樣。</p>';
+    }
+
+    var g = document.createElement('div');
+    g.className = 'gate guide';
+    g.innerHTML = '<div class="inner"><h2>加到手機主畫面</h2>' + body
+      + '<div class="form-actions"><button class="btn btn-solid" id="guideClose">知道了</button>'
+      + '<button class="btn btn-quiet" id="guideCopy">複製網址</button></div></div>';
+    document.body.appendChild(g);
+
+    g.querySelector('#guideClose').addEventListener('click', function(){ g.remove(); });
+    g.querySelector('#guideCopy').addEventListener('click', function(){
+      var url = location.href.split('#')[0];
+      var done = function(){ toast('網址複製好了，貼到瀏覽器就行'); };
+      if(navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(url).then(done, function(){ fallbackCopy(url, done); });
+      } else {
+        fallbackCopy(url, done);
+      }
+    });
+  }
+
+  function fallbackCopy(text, done){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try{ document.execCommand('copy'); done(); }
+    catch(e){ toast('複製失敗，請手動複製網址列'); }
+    ta.remove();
+  }
+
   function askName(first){
+    var others = people.filter(function(n){ return n !== me; });
     var g=document.createElement('div');
     g.className='gate';
     g.innerHTML='<div class="inner"><h2>'+(first?'你是誰？':'改個名字')+'</h2>'
       +'<p>名字會記在每一筆待辦和完工紀錄上，讓大家知道是誰做的。</p>'
+      +(others.length
+          ? '<div class="people">'
+            + others.map(function(n,i){
+                return '<button data-pick="'+i+'">'+esc(n)+'</button>';
+              }).join('')
+            + '</div><p class="or">或輸入新名字</p>'
+          : '')
       +'<div class="field"><label for="gName">顯示名稱</label>'
-      +'<input id="gName" type="text" maxlength="12" placeholder="例：王大明" value="'+esc(me)+'"></div>'
+      +'<input id="gName" type="text" maxlength="12" value="'+esc(me)+'"></div>'
       +'<div class="form-actions"><button class="btn btn-solid" id="gGo">開始使用</button>'
-      +(first?'':'<button class="btn btn-quiet" id="gCancel">取消</button>')+'</div></div>';
+      +(first?'':'<button class="btn btn-quiet" id="gCancel">取消</button>')+'</div>'
+      +(first && others.length
+          ? '<p class="tip">每次進來都要重選？<button id="gHowto">把板子加到主畫面</button>就會記住你。</p>'
+          : '')
+      +'</div>';
     document.body.appendChild(g);
+
     var input=g.querySelector('#gName');
-    setTimeout(function(){ input.focus(); },60);
-    function save(){
-      var v=input.value.trim();
+    if(!others.length) setTimeout(function(){ input.focus(); },60);
+
+    function use(v){
+      v = String(v||'').trim();
       if(!v){ toast('先輸入名字'); return; }
-      me=v.slice(0,12);
+      me = v.slice(0,12);
       keep('boardName', me);
       $('whoami').textContent='我是 '+me;
       g.remove();
     }
-    g.querySelector('#gGo').addEventListener('click', save);
+    g.querySelectorAll('[data-pick]').forEach(function(b){
+      b.addEventListener('click', function(){
+        use(others[parseInt(b.getAttribute('data-pick'),10)]);
+      });
+    });
+    g.querySelector('#gGo').addEventListener('click', function(){ use(input.value); });
     input.addEventListener('keydown', function(e){
-      if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) save();
+      if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) use(input.value);
     });
     var c=g.querySelector('#gCancel');
     if(c) c.addEventListener('click', function(){ g.remove(); });
+    var h=g.querySelector('#gHowto');
+    if(h) h.addEventListener('click', openGuide);
   }
 
   function askPass(){
@@ -971,6 +1105,7 @@
     $('trashList').classList.toggle('open', !exp);
   });
   $('whoami').addEventListener('click', function(){ askName(false); });
+  $('howto').addEventListener('click', openGuide);
   $('sync').addEventListener('click', function(){
     refresh().then(function(){ toast('已更新'); }).catch(function(e){ toast(e.message); });
   });
