@@ -40,6 +40,18 @@ function doGet(e) {
   return json_({ ok: true, hint: '待辦板後端正常運作中。請從網頁開啟。' });
 }
 
+var WRITES = {
+  add:       function (q, w) { return addTask_(q, w); },
+  done:      function (q, w) { return finishTask_(q, w); },
+  photos:    function (q, w) { return addPhotos_(q, w); },
+  note:      function (q, w) { return addNote_(q, w); },
+  reopen:    function (q, w) { return reopenTask_(q, w); },
+  trash:     function (q, w) { return trashTask_(q, w); },
+  restore:   function (q, w) { return restoreTask_(q, w); },
+  addRepeat: function (q, w) { return addRepeat_(q, w); },
+  delRepeat: function (q, w) { return delRepeat_(q, w); }
+};
+
 function doPost(e) {
   try {
     var req = JSON.parse(e.postData.contents);
@@ -47,22 +59,17 @@ function doPost(e) {
       return json_({ ok: false, error: '通行碼不對', needPass: true });
     }
     var who = String(req.who || '').slice(0, 20) || '（未署名）';
-    var out;
 
-    switch (req.action) {
-      case 'list':    out = listTasks_(); break;
-      case 'add':     out = addTask_(req, who); break;
-      case 'done':    out = finishTask_(req, who); break;
-      case 'photos':  out = addPhotos_(req, who); break;
-      case 'note':    out = addNote_(req, who); break;
-      case 'reopen':  out = reopenTask_(req, who); break;
-      case 'trash':   out = trashTask_(req, who); break;
-      case 'restore': out = restoreTask_(req, who); break;
-      case 'addRepeat': out = addRepeat_(req, who); break;
-      case 'delRepeat': out = delRepeat_(req, who); break;
-      default: throw new Error('不認得的動作：' + req.action);
-    }
-    return json_(out);
+    if (req.action === 'list') return json_(listTasks_());
+
+    var fn = WRITES[req.action];
+    if (!fn) throw new Error('不認得的動作：' + req.action);
+
+    // 寫入完直接把最新的板子一起回傳，前端就不必再跑一趟
+    var res = fn(req, who) || {};
+    var board = listTasks_(req.action === 'addRepeat');
+    if (res.id) board.id = res.id;
+    return json_(board);
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message ? err.message : err) });
   }
@@ -75,7 +82,12 @@ function json_(obj) {
 
 /* ---------------- 試算表 ---------------- */
 
+// Apps Script 每次請求都是全新的執行環境，所以這個暫存只活在單次請求裡，
+// 用來避免同一份分頁在一次請求中被重覆抓好幾次（每次都是一趟遠端呼叫）。
+var SHEETS_ = {};
+
 function sheet_(name, headers) {
+  if (SHEETS_[name]) return SHEETS_[name];
   var ss = SpreadsheetApp.getActive();
   var sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
@@ -83,16 +95,10 @@ function sheet_(name, headers) {
     sh.appendRow(headers);
     sh.setFrozenRows(1);
   }
+  SHEETS_[name] = sh;
   return sh;
 }
-function tasksSheet_() {
-  var sh = sheet_(TASK_SHEET, TASK_HEADERS);
-  // 早期版本這欄叫「案場」，順手改成現在的名稱
-  if (sh.getLastRow() >= 1 && sh.getRange(1, COL.site + 1).getValue() === '案場') {
-    sh.getRange(1, COL.site + 1).setValue('分類');
-  }
-  return sh;
-}
+function tasksSheet_()  { return sheet_(TASK_SHEET, TASK_HEADERS); }
 function logsSheet_()   { return sheet_(LOG_SHEET, LOG_HEADERS); }
 function repeatSheet_() { return sheet_(REPEAT_SHEET, REPEAT_HEADERS); }
 
@@ -182,9 +188,39 @@ function logsByNo_() {
 
 /* ---------------- 動作 ---------------- */
 
-function listTasks_() {
-  // 兩個人同時開板子時，不能重複產生或重複刪除
-  lock_(function () { purge_(); generateDue_(); });
+/**
+ * 清理刪除區、產生到期的重複任務。
+ * 這兩件事一天做一次就夠，本來每次載入都跑，白白多讀兩個分頁。
+ */
+function maybeMaintain_(force) {
+  var props = PropertiesService.getScriptProperties();
+  var last = Number(props.getProperty('lastMaintain') || 0);
+  if (!force && last && sameDay_(new Date(last), new Date())) return;
+
+  lock_(function () {
+    // 拿到鎖之後再確認一次，避免兩個人同時開板子時重覆跑
+    var again = Number(props.getProperty('lastMaintain') || 0);
+    if (!force && again && sameDay_(new Date(again), new Date())) return;
+
+    // 早期版本這欄叫「案場」，順手改成現在的名稱
+    var sh = tasksSheet_();
+    if (sh.getLastRow() >= 1 && sh.getRange(1, COL.site + 1).getValue() === '案場') {
+      sh.getRange(1, COL.site + 1).setValue('分類');
+    }
+    purge_();
+    generateDue_();
+    props.setProperty('lastMaintain', String(new Date().getTime()));
+  });
+}
+
+function sameDay_(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+         a.getMonth() === b.getMonth() &&
+         a.getDate() === b.getDate();
+}
+
+function listTasks_(force) {
+  maybeMaintain_(force);
   var logs = logsByNo_();
   var tasks = rows_(tasksSheet_()).map(function (r) {
     var status = r[COL.status] === DONE ? 'done' : (r[COL.status] === TRASH ? 'trash' : 'open');

@@ -369,12 +369,40 @@
             function(e){ markBusy(false); throw e; });
   }
 
-  function refresh(){
-    return api('list').then(function(d){
-      tasks = d.tasks || [];
-      repeats = d.repeats || [];
-      if(d.trashDays) TRASH_DAYS = d.trashDays;
+  function applyBoard(d){
+    if(!d || !d.tasks) return d;
+    tasks = d.tasks;
+    repeats = d.repeats || [];
+    if(d.trashDays) TRASH_DAYS = d.trashDays;
+    render();
+    return d;
+  }
+
+  function refresh(){ return api('list').then(applyBoard); }
+
+  /**
+   * 先改畫面再送出，讓操作看起來是即時的。
+   * 存檔要 3 秒左右，但那 3 秒你已經可以繼續做別的事。
+   * 萬一失敗就整包還原成送出前的樣子，不會留下假的狀態。
+   */
+  function act(action, payload, localChange){
+    var backup = JSON.stringify({ t: tasks, r: repeats });
+    if(localChange){ localChange(); render(); }
+    return api(action, payload).then(applyBoard).catch(function(e){
+      var b = JSON.parse(backup);
+      tasks = b.t; repeats = b.r;
       render();
+      throw e;
+    });
+  }
+
+  function patch(id, changes){
+    tasks = tasks.map(function(t){
+      if(t.id !== id) return t;
+      var next = {};
+      for(var k in t){ next[k] = t[k]; }
+      for(var c in changes){ next[c] = changes[c]; }
+      return next;
     });
   }
 
@@ -395,7 +423,9 @@
         var r = repeats.filter(function(x){ return x.id===id; })[0];
         if(!confirm('刪除重複設定「'+(r?r.title:'')+'」？\n\n已經產生的待辦不會消失，只是以後不再自動出現。')) return;
         b.disabled = true;
-        api('delRepeat',{id:id}).then(refresh).then(function(){ toast('已刪除重複設定'); })
+        act('delRepeat', {id:id}, function(){
+          repeats = repeats.filter(function(x){ return x.id !== id; });
+        }).then(function(){ toast('已刪除重複設定'); })
           .catch(function(e){ toast(e.message); });
       });
     });
@@ -439,7 +469,7 @@
     return '<article class="slip">'
       + '<button class="tick" data-tick="'+t.id+'" aria-label="標記完工：'+esc(t.title)+'"></button>'
       + '<button class="slip-body" data-open="'+t.id+'">'
-      + '<span class="slip-top"><span class="no">#'+pad(t.no)+'</span>'
+      + '<span class="slip-top"><span class="no">'+(t.no ? '#'+pad(t.no) : '#··')+'</span>'
       + '<span class="title">'+esc(t.title)
       + (t.logs[0] && t.logs[0].action === '自動建立' ? '<span class="tag-rep">重複</span>' : '')
       + '</span></span>'
@@ -564,20 +594,49 @@
     });
 
     sheet.querySelector('#cGo').addEventListener('click', function(){
-      var btn=this;
-      btn.disabled=true; btn.textContent='上傳中…';
-      api('done', { id:id, note: sheet.querySelector('#cNote').value.trim(), photos: pending })
-        .then(function(){ pending=[]; return refresh(); })
+      var note = sheet.querySelector('#cNote').value.trim();
+      var shots = pending.slice();
+      var btn = this;
+
+      // 沒照片就直接讓畫面動起來，存檔在背景跑
+      if(!shots.length){
+        closeOverlay();
+        openDoneSection();
+        act('done', { id:id, note:note, photos:[] }, function(){
+          patch(id, { status:'done', doneBy: whoami(), doneAt: Date.now(), doneNote: note });
+        }).then(function(){ stampNewest(); toast('已完工'); })
+          .catch(function(e){ toast(e.message); });
+        return;
+      }
+
+      // 有照片就得等它真的傳完，不能先騙使用者說好了
+      btn.disabled = true;
+      btn.textContent = '上傳中…';
+      pending = [];
+      api('done', { id:id, note:note, photos:shots })
+        .then(applyBoard)
         .then(function(){
           closeOverlay();
-          var head=$('doneHead');
-          if(head.getAttribute('aria-expanded')!=='true') head.click();
-          var first=$('doneList').querySelector('.chop-sm');
-          if(first) first.classList.add('stamping');
+          openDoneSection();
+          stampNewest();
           toast('已完工');
         })
-        .catch(function(e){ btn.disabled=false; btn.textContent='確認完工'; toast(e.message); });
+        .catch(function(e){
+          pending = shots;
+          btn.disabled = false;
+          btn.textContent = '確認完工';
+          toast(e.message);
+        });
     });
+  }
+
+  function openDoneSection(){
+    var head = $('doneHead');
+    if(head.getAttribute('aria-expanded') !== 'true') head.click();
+  }
+  function stampNewest(){
+    var first = $('doneList').querySelector('.chop-sm');
+    if(first) first.classList.add('stamping');
   }
 
   function openDetail(id){
@@ -643,7 +702,10 @@
     var rs=sheet.querySelector('#restore');
     if(rs) rs.addEventListener('click', function(){
       this.disabled=true;
-      api('restore',{id:id}).then(refresh).then(function(){ closeOverlay(); toast('已還原'); })
+      closeOverlay();
+      act('restore', {id:id}, function(){
+        patch(id, { status: t.doneAt ? 'done' : 'open', deletedAt: 0, deletedBy: '' });
+      }).then(function(){ toast('已還原'); })
         .catch(function(e){ toast(e.message); });
     });
 
@@ -653,7 +715,9 @@
       var v=sheet.querySelector('#nNote').value.trim();
       if(!v){ toast('先寫點東西'); return; }
       this.disabled=true;
-      api('note',{id:id, text:v}).then(refresh).then(function(){ openDetail(id); toast('已加入紀錄'); })
+      act('note', {id:id, text:v}, function(){
+        patch(id, { logs: byId(id).logs.concat([{ at:Date.now(), who:whoami(), action:'留言', text:v }]) });
+      }).then(function(){ openDetail(id); toast('已加入紀錄'); })
         .catch(function(e){ toast(e.message); });
     });
 
@@ -666,7 +730,7 @@
       toast('照片處理中…');
       Promise.all(files.map(shrink))
         .then(function(list){ return api('photos',{id:id, photos:list}); })
-        .then(refresh).then(function(){ openDetail(id); toast('照片已上傳'); })
+        .then(applyBoard).then(function(){ openDetail(id); toast('照片已上傳'); })
         .catch(function(e){ toast(e.message||'照片上傳失敗'); });
     });
 
@@ -676,19 +740,22 @@
     var ro=sheet.querySelector('#reopen');
     if(ro) ro.addEventListener('click', function(){
       this.disabled=true;
-      api('reopen',{id:id}).then(refresh).then(function(){ closeOverlay(); toast('已退回待辦'); })
+      closeOverlay();
+      act('reopen', {id:id}, function(){
+        patch(id, { status:'open', doneBy:'', doneAt:0, doneNote:'' });
+      }).then(function(){ toast('已退回待辦'); })
         .catch(function(e){ toast(e.message); });
     });
 
     sheet.querySelector('#del').addEventListener('click', function(){
       if(!confirm('把「'+t.title+'」移到刪除區？\n\n30 天內都可以還原，時間到才會真的刪掉。')) return;
-      this.disabled=true;
-      api('trash',{id:id}).then(refresh).then(function(){
-        closeOverlay();
-        var th=$('trashHead');
-        if(th.getAttribute('aria-expanded')!=='true') th.click();
-        toast('已移到刪除區，30 天內可還原');
-      }).catch(function(e){ toast(e.message); });
+      closeOverlay();
+      var th = $('trashHead');
+      if(th.getAttribute('aria-expanded') !== 'true') th.click();
+      act('trash', {id:id}, function(){
+        patch(id, { status:'trash', deletedAt: Date.now(), deletedBy: whoami() });
+      }).then(function(){ toast('已移到刪除區，30 天內可還原'); })
+        .catch(function(e){ toast(e.message); });
     });
   }
 
@@ -800,27 +867,30 @@
   function addTask(){
     var title=$('fTitle').value.trim();
     if(!title){ toast('先寫要做什麼'); return; }
-    var btn=$('fSave');
-    btn.disabled=true;
-
     var repeating = $('fRepeat').checked;
     var payload = { title:title, site:$('fSite').value.trim(), desc:$('fDesc').value.trim() };
     if(repeating){ payload.freq = $('fFreq').value; payload.param = repeatParam(); }
 
-    api(repeating ? 'addRepeat' : 'add', payload)
-      .then(refresh).then(function(){
-        var wasRepeating = repeating;
-        resetForm();
-        $('form').classList.remove('open');
-        if(wasRepeating){
-          var head=$('repeatHead');
-          if(head.getAttribute('aria-expanded')!=='true') head.click();
-          toast('重複設定已建立');
-        } else {
-          toast('已加入待辦');
-        }
-      })
-      .catch(function(e){ toast(e.message); btn.disabled=false; });
+    var draft = payload;
+    resetForm();
+    $('form').classList.remove('open');
+
+    act(repeating ? 'addRepeat' : 'add', payload, repeating ? null : function(){
+      tasks = tasks.concat([{
+        id: 'tmp_'+Date.now(), no: 0, title: draft.title, site: draft.site, desc: draft.desc,
+        status: 'open', createdBy: whoami(), createdAt: Date.now(),
+        doneBy: '', doneAt: 0, doneNote: '', deletedBy: '', deletedAt: 0,
+        photos: [], logs: []
+      }]);
+    }).then(function(){
+      if(repeating){
+        var head=$('repeatHead');
+        if(head.getAttribute('aria-expanded')!=='true') head.click();
+        toast('重複設定已建立');
+      } else {
+        toast('已加入待辦');
+      }
+    }).catch(function(e){ toast(e.message); });
   }
 
   $('addToggle').addEventListener('click', function(){
