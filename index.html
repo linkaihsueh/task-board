@@ -238,6 +238,8 @@
   .hint-note{color:var(--mute)}
   .rrow{width:100%;background:transparent;border:0;border-bottom:1px dashed var(--line);text-align:left}
   .rrow.paused .t,.rrow.paused .cyc{opacity:.5}
+  #repeatList .rgroup{margin:16px 0 2px}
+  #repeatList .rgroup:first-child{margin-top:4px}
   .facts{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;margin:16px 0 4px;font-size:14px}
   .facts dt{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--mute);padding-top:3px}
   .facts dd{margin:0}
@@ -988,7 +990,23 @@
 
     $('repeatCount').textContent = repeats.length;
     $('repeatSection').hidden = repeats.length === 0;
-    $('repeatList').innerHTML = repeats.map(repeatRowHTML).join('');
+    $('repeatList').innerHTML = repeatGroupsHTML();
+  }
+
+  /** 重複設定：國曆、農曆分開，各自照下次出現的日期排（暫停的排在最後） */
+  function repeatSortKey(r){
+    var n = ymd(r.next) || nextOcc(r, todayYmd());
+    return (r.paused ? 1e8 : 0) + n.y*10000 + n.m*100 + n.d;
+  }
+  function repeatGroupsHTML(){
+    var groups = [['G', '國曆'], ['L', '農曆']];
+    return groups.map(function(g){
+      var list = repeats.filter(function(r){ return (r.cal === 'L' ? 'L' : 'G') === g[0]; })
+        .sort(function(a, b){ return repeatSortKey(a) - repeatSortKey(b) || a.no - b.no; });
+      if(!list.length) return '';
+      return '<div class="sec-label rgroup">'+g[1]+' · '+list.length+'</div>'
+        + list.map(repeatRowHTML).join('');
+    }).join('');
   }
 
   function byId(id){
