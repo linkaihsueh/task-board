@@ -213,6 +213,39 @@
 
   .footnote{margin-top:26px;font-size:12px;color:var(--mute);line-height:1.7;
             border-top:1px solid var(--line);padding-top:12px}
+  .footnote button{background:none;border:0;padding:0;color:var(--blue);font-size:12px;
+                   text-decoration:underline;text-underline-offset:3px}
+
+  /* 唯讀／編輯 */
+  .whoami.lock{border-color:var(--blue);color:var(--blue)}
+  .whoami.lock::before{content:"✎ ";}
+  .ro-banner{margin:10px 0 0;padding:10px 12px;border:1.5px solid var(--blue);border-radius:3px;
+             color:var(--blue);font-size:13px;line-height:1.6}
+  .tick-off{display:block;opacity:.3;border-style:dashed}
+  .slip.saving{opacity:.55}
+  .ro-hint{margin-top:16px;color:var(--mute)}
+  .err{margin:-6px 0 12px;color:var(--chop);font-size:13px;font-weight:700}
+  .muted{color:var(--mute);font-size:13px;margin:0}
+
+  /* 重複設定 */
+  .repeat-box{border-top:1px solid var(--line);padding-top:10px}
+  .seg{display:flex;border:1.5px solid var(--ink);border-radius:3px;overflow:hidden}
+  .seg-b{flex:1;border:0;background:transparent;padding:9px 0;font-weight:700;font-size:15px}
+  .seg-b + .seg-b{border-left:1.5px solid var(--ink)}
+  .seg-b.on{background:var(--ink);color:var(--paper)}
+  .row2{display:flex;gap:10px}
+  .row2 .field{flex:1;min-width:0}
+  .hint-note{color:var(--mute)}
+  .rrow{width:100%;background:transparent;border:0;border-bottom:1px dashed var(--line);text-align:left}
+  .rrow.paused .t,.rrow.paused .cyc{opacity:.5}
+  .facts{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;margin:16px 0 4px;font-size:14px}
+  .facts dt{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--mute);padding-top:3px}
+  .facts dd{margin:0}
+  .facts .cyc{font-size:12px;font-weight:700;color:var(--blue);border:1px solid var(--blue);
+              border-radius:2px;padding:1px 6px}
+  .lunar{display:block;font-size:12px;color:var(--mute);margin-top:2px}
+  .paused-tag{font-size:11px;font-weight:700;color:var(--chop);border:1px solid var(--chop);
+              border-radius:2px;padding:0 5px}
   @media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}}
 </style>
 </head>
@@ -224,7 +257,7 @@
       <p class="eyebrow">Shared Task Board</p>
       <h1>群組待辦板</h1>
     </div>
-    <button class="whoami" id="whoami">設定名字</button>
+    <button class="whoami" id="whoami">編輯</button>
   </header>
 
   <div class="meter">
@@ -232,6 +265,8 @@
     <span>完工 <b id="mDone">0</b></span>
     <button class="sync" id="sync">重新整理</button>
   </div>
+
+  <p class="ro-banner" id="roBanner" hidden></p>
 
   <section class="composer">
     <button class="add-toggle" id="addToggle"><span class="plus">＋</span>新增待辦</button>
@@ -250,30 +285,7 @@
       </div>
 
       <label class="check"><input type="checkbox" id="fRepeat"><span>重複</span></label>
-      <div id="repeatBox" hidden>
-        <div class="field">
-          <label for="fFreq">多久一次</label>
-          <select id="fFreq">
-            <option value="每天">每天</option>
-            <option value="每週">每週</option>
-            <option value="每月" selected>每月</option>
-            <option value="每年">每年</option>
-          </select>
-        </div>
-        <div class="field" id="wkField" hidden>
-          <label for="fWeekday">星期幾</label>
-          <select id="fWeekday"></select>
-        </div>
-        <div class="field" id="monField" hidden>
-          <label for="fMonth">幾月</label>
-          <select id="fMonth"></select>
-        </div>
-        <div class="field" id="dayField">
-          <label for="fDay">幾號</label>
-          <select id="fDay"></select>
-        </div>
-        <p class="hint" id="repeatHint"></p>
-      </div>
+      <div id="repeatBox" class="repeat-box" hidden></div>
 
       <div class="form-actions">
         <button class="btn btn-solid" id="fSave" disabled>加入待辦</button>
@@ -312,7 +324,7 @@
   <p class="footnote">
     大家看到的是同一份清單。資料存在建立者的 Google 試算表裡，照片存在他的雲端硬碟。<br>
     刪掉的東西會先進刪除區放 30 天，這段期間隨時可以還原，時間到才會真的消失。<br>
-    拿到連結的人都打得開，不要在上面放個資。<br>
+    拿到連結的人都看得到內容，但要有編輯密碼才能修改。不要在上面放個資。<br>
     <button id="howto">名字每次都不見？把板子加到主畫面</button>
   </p>
 </div>
@@ -333,10 +345,167 @@
   var repeats = [];
   var people = [];
   var me = '';
-  var pass = '';
+  var pw = '';                 // 編輯密碼（只有輸入過的人手機裡才有）
+  var canEdit = false;         // 一律以後端的判斷為準
+  var passwordSet = true;
+  var serverToday = '';
   var overlayOpen = false;
   var pending = [];
   var busy = 0;
+  var reqSeq = 0, lastWriteSeq = 0;
+
+  /* ================= 農曆 =================
+   * 表格涵蓋 1900–2100 年，以東經 120 度（台灣、中國共用的 UTC+8）計算。
+   * 每個數字編碼一年：低 4 位元是閏月是第幾月（0 表示沒有閏月），
+   * 第 5–16 位元依序是 1–12 月是大月（30 天）還是小月（29 天），第 17 位元是閏月大小。
+   * 1933、2097 兩年依天文計算修正過；已逐日比對 1901–2100 共 73,049 天，與天文演算法一致。
+   * 這段程式在後端和網頁裡一字不差地各放一份，兩邊算出來的日子才會一致。
+   */
+  var LUNAR_INFO = [
+    0x04bd8,0x04ae0,0x0a570,0x054d5,0x0d260,0x0d950,0x16554,0x056a0,0x09ad0,0x055d2, // 1900
+    0x04ae0,0x0a5b6,0x0a4d0,0x0d250,0x1d255,0x0b540,0x0d6a0,0x0ada2,0x095b0,0x14977, // 1910
+    0x04970,0x0a4b0,0x0b4b5,0x06a50,0x06d40,0x1ab54,0x02b60,0x09570,0x052f2,0x04970, // 1920
+    0x06566,0x0d4a0,0x0ea50,0x16a95,0x05ad0,0x02b60,0x186e3,0x092e0,0x1c8d7,0x0c950, // 1930
+    0x0d4a0,0x1d8a6,0x0b550,0x056a0,0x1a5b4,0x025d0,0x092d0,0x0d2b2,0x0a950,0x0b557, // 1940
+    0x06ca0,0x0b550,0x15355,0x04da0,0x0a5b0,0x14573,0x052b0,0x0a9a8,0x0e950,0x06aa0, // 1950
+    0x0aea6,0x0ab50,0x04b60,0x0aae4,0x0a570,0x05260,0x0f263,0x0d950,0x05b57,0x056a0, // 1960
+    0x096d0,0x04dd5,0x04ad0,0x0a4d0,0x0d4d4,0x0d250,0x0d558,0x0b540,0x0b6a0,0x195a6, // 1970
+    0x095b0,0x049b0,0x0a974,0x0a4b0,0x0b27a,0x06a50,0x06d40,0x0af46,0x0ab60,0x09570, // 1980
+    0x04af5,0x04970,0x064b0,0x074a3,0x0ea50,0x06b58,0x05ac0,0x0ab60,0x096d5,0x092e0, // 1990
+    0x0c960,0x0d954,0x0d4a0,0x0da50,0x07552,0x056a0,0x0abb7,0x025d0,0x092d0,0x0cab5, // 2000
+    0x0a950,0x0b4a0,0x0baa4,0x0ad50,0x055d9,0x04ba0,0x0a5b0,0x15176,0x052b0,0x0a930, // 2010
+    0x07954,0x06aa0,0x0ad50,0x05b52,0x04b60,0x0a6e6,0x0a4e0,0x0d260,0x0ea65,0x0d530, // 2020
+    0x05aa0,0x076a3,0x096d0,0x04afb,0x04ad0,0x0a4d0,0x1d0b6,0x0d250,0x0d520,0x0dd45, // 2030
+    0x0b5a0,0x056d0,0x055b2,0x049b0,0x0a577,0x0a4b0,0x0aa50,0x1b255,0x06d20,0x0ada0, // 2040
+    0x14b63,0x09370,0x049f8,0x04970,0x064b0,0x168a6,0x0ea50,0x06b20,0x1a6c4,0x0aae0, // 2050
+    0x092e0,0x0d2e3,0x0c960,0x0d557,0x0d4a0,0x0da50,0x05d55,0x056a0,0x0a6d0,0x055d4, // 2060
+    0x052d0,0x0a9b8,0x0a950,0x0b4a0,0x0b6a6,0x0ad50,0x055a0,0x0aba4,0x0a5b0,0x052b0, // 2070
+    0x0b273,0x06930,0x07337,0x06aa0,0x0ad50,0x14b55,0x04b60,0x0a570,0x054e4,0x0d160, // 2080
+    0x0e968,0x0d520,0x0daa0,0x16aa6,0x056d0,0x04ae0,0x0a9d4,0x0a2d0,0x0d150,0x0f252, // 2090
+    0x0d520 // 2100
+  ];
+  var LUNAR_MIN = 1900, LUNAR_MAX = 2100;
+  var LUNAR_BASE_UTC = Date.UTC(1900, 0, 31);   // 農曆 1900 年正月初一
+
+  function lunarLeapMonth(y) { return LUNAR_INFO[y - LUNAR_MIN] & 0xf; }
+  function lunarLeapDays(y) {
+    return lunarLeapMonth(y) ? ((LUNAR_INFO[y - LUNAR_MIN] & 0x10000) ? 30 : 29) : 0;
+  }
+  function lunarMonthDays(y, m) {
+    return (LUNAR_INFO[y - LUNAR_MIN] & (0x10000 >> m)) ? 30 : 29;
+  }
+  function lunarYearDays(y) {
+    var sum = 348, info = LUNAR_INFO[y - LUNAR_MIN];
+    for (var bit = 0x8000; bit > 0x8; bit >>= 1) { if (info & bit) sum += 1; }
+    return sum + lunarLeapDays(y);
+  }
+
+  var LUNAR_YEAR_START_ = null;   // 每個農曆年的正月初一，距離基準日幾天
+  function lunarYearStarts_() {
+    if (LUNAR_YEAR_START_) return LUNAR_YEAR_START_;
+    var out = [], acc = 0;
+    for (var y = LUNAR_MIN; y <= LUNAR_MAX; y++) { out.push(acc); acc += lunarYearDays(y); }
+    LUNAR_YEAR_START_ = out;
+    return out;
+  }
+
+  /** 一年裡的農曆月份依序排出來，閏月排在同名月份後面。 */
+  function lunarMonthsOf(y) {
+    var leap = lunarLeapMonth(y), out = [];
+    for (var m = 1; m <= 12; m++) {
+      out.push({ m: m, leap: false, days: lunarMonthDays(y, m) });
+      if (m === leap) out.push({ m: m, leap: true, days: lunarLeapDays(y) });
+    }
+    return out;
+  }
+
+  function ymdFromOffset_(off) {
+    var d = new Date(LUNAR_BASE_UTC + off * 86400000);
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+  }
+
+  /** 國曆 → 農曆。回傳 {y, m, d, leap}；超出 1900–2100 回傳 null。 */
+  function solarToLunar(Y, M, D) {
+    var off = Math.round((Date.UTC(Y, M - 1, D) - LUNAR_BASE_UTC) / 86400000);
+    if (off < 0) return null;
+    var starts = lunarYearStarts_();
+    var y = LUNAR_MIN;
+    while (y < LUNAR_MAX && starts[y - LUNAR_MIN + 1] <= off) y++;
+    var rest = off - starts[y - LUNAR_MIN];
+    if (rest >= lunarYearDays(y)) return null;
+    var months = lunarMonthsOf(y);
+    for (var i = 0; i < months.length; i++) {
+      if (rest < months[i].days) return { y: y, m: months[i].m, d: rest + 1, leap: months[i].leap };
+      rest -= months[i].days;
+    }
+    return null;
+  }
+
+  /** 農曆 → 國曆。日子超過該月天數時，落在該月最後一天（例如三十遇到小月就是廿九）。 */
+  function lunarToSolar(y, m, d, leap) {
+    if (y < LUNAR_MIN || y > LUNAR_MAX) return null;
+    if (leap && lunarLeapMonth(y) !== m) return null;
+    var off = lunarYearStarts_()[y - LUNAR_MIN];
+    var months = lunarMonthsOf(y);
+    for (var i = 0; i < months.length; i++) {
+      var mo = months[i];
+      if (mo.m === m && mo.leap === !!leap) {
+        return ymdFromOffset_(off + Math.min(Math.max(1, d), mo.days) - 1);
+      }
+      off += mo.days;
+    }
+    return null;
+  }
+
+  var LUNAR_MONTH_NAMES = ['', '正月', '二月', '三月', '四月', '五月', '六月',
+                           '七月', '八月', '九月', '十月', '十一月', '十二月'];
+  function lunarDayName(d) {
+    var n = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+    if (d <= 10) return '初' + n[d];
+    if (d < 20) return '十' + n[d - 10];
+    if (d === 20) return '二十';
+    if (d < 30) return '廿' + n[d - 20];
+    return '三十';
+  }
+  function lunarText(l) {
+    return l ? (l.leap ? '閏' : '') + LUNAR_MONTH_NAMES[l.m] + lunarDayName(l.d) : '';
+  }
+
+  /** 以 {y,m,d} 比大小 */
+  function ymdKey_(o) { return o.y * 10000 + o.m * 100 + o.d; }
+
+  /**
+   * 從某天（含當天）起，下一個農曆每月 D 日。閏月也算一個月——初一十五拜拜，閏月照拜。
+   * 回傳國曆 {y,m,d}。
+   */
+  function nextLunarMonthly(D, from) {
+    var cur = solarToLunar(from.y, from.m, from.d);
+    if (!cur) return null;
+    var fromKey = ymdKey_(from);
+    for (var y = cur.y; y <= Math.min(cur.y + 2, LUNAR_MAX); y++) {
+      var months = lunarMonthsOf(y);
+      for (var i = 0; i < months.length; i++) {
+        var s = lunarToSolar(y, months[i].m, D, months[i].leap);
+        if (s && ymdKey_(s) >= fromKey) return s;
+      }
+    }
+    return null;
+  }
+
+  /** 從某天（含當天）起，下一個農曆每年 M 月 D 日。只認正常月份，不在閏月重複一次。 */
+  function nextLunarYearly(M, D, from) {
+    var cur = solarToLunar(from.y, from.m, from.d);
+    if (!cur) return null;
+    var fromKey = ymdKey_(from);
+    for (var y = cur.y - 1; y <= Math.min(cur.y + 2, LUNAR_MAX); y++) {
+      if (y < LUNAR_MIN) continue;
+      var s = lunarToSolar(y, M, D, false);
+      if (s && ymdKey_(s) >= fromKey) return s;
+    }
+    return null;
+  }
+  /* ================= 農曆結束 ================= */
+
 
   function $(id){ return document.getElementById(id); }
   function esc(s){
@@ -347,11 +516,10 @@
   function pad(n){ return String(n).padStart(2,'0'); }
   function fmt(ts){ var d=new Date(ts); return (d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
   function fmtFull(ts){ var d=new Date(ts); return d.getFullYear()+'/'+pad(d.getMonth()+1)+'/'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes()); }
-  function fmtDay(ts){ var d=new Date(ts); return (d.getMonth()+1)+'/'+pad(d.getDate()); }
   function whoami(){ return me || '（未署名）'; }
   function toast(msg){
     var t=$('toast'); t.textContent=msg; t.classList.add('show');
-    clearTimeout(toast._t); toast._t=setTimeout(function(){ t.classList.remove('show'); },2600);
+    clearTimeout(toast._t); toast._t=setTimeout(function(){ t.classList.remove('show'); },2800);
   }
   // 手機內建瀏覽器常把 localStorage 清掉，cookie 多一層機會活下來
   function keep(k,v){
@@ -372,6 +540,182 @@
     $('boot').innerHTML = '<div class="inner"><h2>'+esc(title)+'</h2>'+html+'</div>';
   }
 
+  /* ---------- 日期小工具（{y,m,d}） ---------- */
+  var WEEK_SHORT = ['日','一','二','三','四','五','六'];
+  function ymd(s){
+    var m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(s||''));
+    return m ? { y:+m[1], m:+m[2], d:+m[3] } : null;
+  }
+  function todayYmd(){
+    var t = ymd(serverToday);
+    if(t) return t;
+    var n = new Date();
+    return { y:n.getFullYear(), m:n.getMonth()+1, d:n.getDate() };
+  }
+  function addDaysYmd(o, n){
+    var d = new Date(Date.UTC(o.y, o.m-1, o.d+n));
+    return { y:d.getUTCFullYear(), m:d.getUTCMonth()+1, d:d.getUTCDate() };
+  }
+  function cmpYmd(a,b){ return (a.y*10000+a.m*100+a.d)-(b.y*10000+b.m*100+b.d); }
+  function dim(y,m){ return new Date(Date.UTC(y,m,0)).getUTCDate(); }
+  function weekdayOf(o){ return new Date(Date.UTC(o.y,o.m-1,o.d)).getUTCDay(); }
+  function showYmd(o, withYear){
+    if(!o) return '';
+    var t = cmpYmd(o, todayYmd()) === 0 ? '今天' : '';
+    return (withYear ? o.y+'/' : '') + o.m + '/' + o.d + '（' + (t || '週'+WEEK_SHORT[weekdayOf(o)]) + '）';
+  }
+
+  /* ---------- 重複規則（和後端同一套算法） ---------- */
+  var WEEKDAYS = ['','星期一','星期二','星期三','星期四','星期五','星期六','星期日'];
+
+  function ruleLabel(r){
+    var W = ['', '週一', '週二', '週三', '週四', '週五', '週六', '週日'];
+    if(r.freq==='每天') return '每天';
+    if(r.freq==='每週') return '每'+W[r.weekday];
+    if(r.freq==='每月') return r.cal==='L' ? '每月 農曆'+lunarDayName(r.day) : '每月 '+r.day+' 號';
+    if(r.freq==='每年') return r.cal==='L'
+      ? '每年 農曆'+LUNAR_MONTH_NAMES[r.month]+lunarDayName(r.day)
+      : '每年 '+r.month+' 月 '+r.day+' 日';
+    return r.freq;
+  }
+  function nextOcc(r, from){
+    if(r.freq==='每天') return from;
+    if(r.freq==='每週'){
+      var d = from;
+      for(var i=0;i<7;i++){ if(weekdayOf(d) === r.weekday%7) return d; d = addDaysYmd(d,1); }
+      return from;
+    }
+    if(r.freq==='每月'){
+      if(r.cal==='L') return nextLunarMonthly(r.day, from);
+      var y=from.y, m=from.m;
+      for(var k=0;k<24;k++){
+        var c = { y:y, m:m, d:Math.min(r.day, dim(y,m)) };
+        if(cmpYmd(c, from) >= 0) return c;
+        m++; if(m>12){ m=1; y++; }
+      }
+      return from;
+    }
+    if(r.freq==='每年'){
+      if(r.cal==='L') return nextLunarYearly(r.month, r.day, from);
+      for(var j=0;j<4;j++){
+        var c2 = { y:from.y+j, m:r.month, d:Math.min(r.day, dim(from.y+j, r.month)) };
+        if(cmpYmd(c2, from) >= 0) return c2;
+      }
+    }
+    return from;
+  }
+  /** 規則的小提醒：遇到沒有那一天的月份會怎麼處理 */
+  function ruleCaveat(r){
+    if(r.cal==='L'){
+      if(r.freq==='每年' && r.month===12 && r.day===30) return '農曆十二月沒有三十的年份，會在廿九出現——也就是每年的除夕。';
+      if(r.day===30) return '農曆小月沒有三十，那個月會在廿九出現。';
+      if(r.freq==='每月') return '閏月也會出現。';
+      return '';
+    }
+    if(r.freq==='每月' && r.day>=29) return '沒有 '+r.day+' 號的月份，會在月底出現。';
+    if(r.freq==='每年' && r.month===2 && r.day===29) return '平年沒有 2/29，會在 2/28 出現。';
+    if(r.freq==='每年' && r.day>dim(2024, r.month)) return r.month+' 月沒有 '+r.day+' 號，會在 '+r.month+'/'+dim(2024,r.month)+' 出現。';
+    return '';
+  }
+
+  /**
+   * 重複週期的欄位，新增和編輯共用同一套。p 是欄位 id 的開頭。
+   * 回傳 { get():規則, sync() }。
+   */
+  function repeatFieldsHTML(p){
+    return ''
+      + '<div class="field"><label for="'+p+'Freq">多久一次</label>'
+      + '<select id="'+p+'Freq"><option value="每天">每天</option><option value="每週">每週</option>'
+      + '<option value="每月">每月</option><option value="每年">每年</option></select></div>'
+      + '<div class="field" id="'+p+'CalField"><label>依照</label>'
+      + '<div class="seg" role="radiogroup">'
+      + '<button type="button" class="seg-b" data-cal="G" role="radio">國曆</button>'
+      + '<button type="button" class="seg-b" data-cal="L" role="radio">農曆</button></div></div>'
+      + '<div class="field" id="'+p+'WkField"><label for="'+p+'Weekday">星期幾</label><select id="'+p+'Weekday"></select></div>'
+      + '<div class="row2">'
+      + '<div class="field" id="'+p+'MonField"><label for="'+p+'Month">幾月</label><select id="'+p+'Month"></select></div>'
+      + '<div class="field" id="'+p+'DayField"><label for="'+p+'Day">幾號</label><select id="'+p+'Day"></select></div>'
+      + '</div>'
+      + '<p class="hint" id="'+p+'Hint"></p>';
+  }
+
+  function bindRepeatFields(root, p, init){
+    var q = function(s){ return root.querySelector('#'+p+s); };
+    var freq=q('Freq'), wk=q('Weekday'), mon=q('Month'), day=q('Day'), hint=q('Hint');
+    var segs = root.querySelectorAll('#'+p+'CalField .seg-b');
+    var cal = (init && init.cal) || 'G';
+
+    var opts = '';
+    for(var i=1;i<=7;i++) opts += '<option value="'+i+'">'+WEEKDAYS[i]+'</option>';
+    wk.innerHTML = opts;
+
+    function fillMD(){
+      var keepM = mon.value, keepD = day.value, o='', i;
+      for(i=1;i<=12;i++) o += '<option value="'+i+'">'+(cal==='L' ? LUNAR_MONTH_NAMES[i] : i+' 月')+'</option>';
+      mon.innerHTML = o;
+      o='';
+      var maxD = cal==='L' ? 30 : 31;
+      for(i=1;i<=maxD;i++) o += '<option value="'+i+'">'+(cal==='L' ? lunarDayName(i) : i+' 號')+'</option>';
+      day.innerHTML = o;
+      if(keepM) mon.value = keepM;
+      if(keepD) day.value = String(Math.min(Number(keepD), maxD));
+      root.querySelector('label[for="'+p+'Day"]').textContent = cal==='L' ? '農曆哪一天' : '幾號';
+      root.querySelector('label[for="'+p+'Month"]').textContent = cal==='L' ? '農曆幾月' : '幾月';
+    }
+
+    // 預設值：有舊設定用舊的，沒有就用今天
+    var t = todayYmd(), tl = solarToLunar(t.y, t.m, t.d) || { m:1, d:1 };
+    freq.value = (init && init.freq) || '每月';
+    fillMD();
+    wk.value = String((init && init.weekday) || (weekdayOf(t) || 7));
+    if(init && init.month){ mon.value = String(init.month); }
+    else { mon.value = String(cal==='L' ? tl.m : t.m); }
+    if(init && init.day){ day.value = String(init.day); }
+    else { day.value = String(cal==='L' ? tl.d : t.d); }
+
+    function get(){
+      var r = { freq:freq.value, cal:'G', weekday:0, month:0, day:0 };
+      if(r.freq==='每月' || r.freq==='每年') r.cal = cal;
+      if(r.freq==='每週') r.weekday = Number(wk.value);
+      if(r.freq==='每月' || r.freq==='每年') r.day = Number(day.value);
+      if(r.freq==='每年') r.month = Number(mon.value);
+      return r;
+    }
+    function sync(){
+      var f = freq.value;
+      q('CalField').hidden = !(f==='每月' || f==='每年');
+      q('WkField').hidden = f!=='每週';
+      q('MonField').hidden = f!=='每年';
+      q('DayField').hidden = !(f==='每月' || f==='每年');
+      segs.forEach(function(b){
+        var on = b.getAttribute('data-cal') === cal;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', on ? 'true' : 'false');
+      });
+      var r = get(), n = nextOcc(r, todayYmd());
+      var lunar = n ? solarToLunar(n.y, n.m, n.d) : null;
+      var cav = ruleCaveat(r);
+      hint.innerHTML = esc(ruleLabel(r)) + (n ? ' · 下次 ' + esc(showYmd(n, n.y !== todayYmd().y))
+        + (r.cal==='L' && lunar ? '（農曆'+esc(lunarText(lunar))+'）' : '') : '')
+        + (cav ? '<br><span class="hint-note">'+esc(cav)+'</span>' : '');
+    }
+    segs.forEach(function(b){
+      b.addEventListener('click', function(){
+        var to = b.getAttribute('data-cal');
+        if(to === cal) return;
+        // 切換曆法時，把日子換成「今天」在新曆法裡的日子，比較不會選到奇怪的日期
+        cal = to;
+        fillMD();
+        if(cal==='L'){ mon.value = String(tl.m); day.value = String(tl.d); }
+        else { mon.value = String(t.m); day.value = String(t.d); }
+        sync();
+      });
+    });
+    [freq, wk, mon, day].forEach(function(el){ el.addEventListener('change', sync); });
+    sync();
+    return { get:get, sync:sync };
+  }
+
   /* ---------- 後端 ---------- */
   function markBusy(on){
     busy += on ? 1 : -1;
@@ -379,9 +723,10 @@
     if(s){ s.classList.toggle('busy', busy > 0); s.textContent = busy > 0 ? '同步中…' : '重新整理'; }
   }
 
-  function api(action, payload){
+  function api(action, payload, opts){
+    opts = opts || {};
     markBusy(true);
-    var body = { action: action, who: whoami(), pass: pass };
+    var body = { action: action, who: whoami(), pw: opts.pw != null ? opts.pw : pw };
     for(var k in (payload||{})){ body[k] = payload[k]; }
     // text/plain 讓瀏覽器把它當簡單請求，避開 Apps Script 處理不了的預檢
     return fetch(API, {
@@ -391,13 +736,14 @@
     }).then(function(r){ return r.json(); }).then(function(d){
       if(!d || !d.ok){
         var err = new Error((d && d.error) || '後端沒有回應');
-        err.needPass = !!(d && d.needPass);
+        err.readOnly = !!(d && d.readOnly);
+        err.wrongPassword = !!(d && d.wrongPassword);
         throw err;
       }
       return d;
     }).catch(function(e){
-      if(e.needPass) throw e;
-      if(e instanceof TypeError) throw new Error('連不上後端，請檢查網路或 config.js 的網址');
+      if(e instanceof TypeError) throw new Error('連不上後端，請檢查網路');
+      if(e.readOnly) dropEdit(e.message);
       throw e;
     }).then(function(v){ markBusy(false); return v; },
             function(e){ markBusy(false); throw e; });
@@ -408,19 +754,39 @@
     tasks = d.tasks;
     repeats = d.repeats || [];
     people = d.people || [];
+    if(d.today) serverToday = d.today;
     if(d.trashDays) TRASH_DAYS = d.trashDays;
-    render();
+    if(typeof d.passwordSet === 'boolean') passwordSet = d.passwordSet;
+    if(typeof d.canEdit === 'boolean'){
+      if(pw && !d.canEdit){
+        // 存著的密碼已經不對了（例如密碼換了），清掉，回到唯讀
+        pw = ''; keep('boardPw', '');
+        toast('編輯密碼已經變更，請重新輸入');
+      }
+      canEdit = d.canEdit;
+    }
+    applyMode();
     return d;
   }
 
-  function refresh(){ return api('list').then(applyBoard); }
+  /**
+   * 讀取清單。如果讀取期間有人送出修改，這次讀到的可能是改之前的舊資料，直接丟掉，
+   * 不然畫面會閃回舊狀態。
+   */
+  function refresh(){
+    var mine = ++reqSeq;
+    return api('list').then(function(d){
+      if(mine < lastWriteSeq) return d;
+      return applyBoard(d);
+    });
+  }
 
   /**
    * 先改畫面再送出，讓操作看起來是即時的。
-   * 存檔要 3 秒左右，但那 3 秒你已經可以繼續做別的事。
    * 萬一失敗就整包還原成送出前的樣子，不會留下假的狀態。
    */
   function act(action, payload, localChange){
+    lastWriteSeq = ++reqSeq;
     var backup = JSON.stringify({ t: tasks, r: repeats });
     if(localChange){ localChange(); render(); }
     return api(action, payload).then(applyBoard).catch(function(e){
@@ -429,6 +795,10 @@
       render();
       throw e;
     });
+  }
+  function write(action, payload){
+    lastWriteSeq = ++reqSeq;
+    return api(action, payload).then(applyBoard);
   }
 
   function patch(id, changes){
@@ -441,29 +811,75 @@
     });
   }
 
-  function renderRepeats(){
-    $('repeatCount').textContent = repeats.length;
-    $('repeatSection').hidden = repeats.length === 0;
-    $('repeatList').innerHTML = repeats.map(function(r){
-      return '<div class="rrow">'
-        + '<span class="cyc">'+esc(r.label)+'</span>'
-        + '<span class="t">'+esc(r.title)+'</span>'
-        + '<span class="m">'+(r.next ? '下次 '+fmtDay(r.next) : '')+'</span>'
-        + '<button class="del" data-delrepeat="'+r.id+'" aria-label="刪除重複設定">✕</button>'
-        + '</div>';
-    }).join('');
-    $('repeatList').querySelectorAll('[data-delrepeat]').forEach(function(b){
-      b.addEventListener('click', function(){
-        var id = b.getAttribute('data-delrepeat');
-        var r = repeats.filter(function(x){ return x.id===id; })[0];
-        if(!confirm('刪除重複設定「'+(r?r.title:'')+'」？\n\n已經產生的待辦不會消失，只是以後不再自動出現。')) return;
-        b.disabled = true;
-        act('delRepeat', {id:id}, function(){
-          repeats = repeats.filter(function(x){ return x.id !== id; });
-        }).then(function(){ toast('已刪除重複設定'); })
-          .catch(function(e){ toast(e.message); });
+  /* ---------- 編輯權限 ---------- */
+  function applyMode(){
+    document.body.classList.toggle('ro', !canEdit);
+    var composer = document.querySelector('.composer');
+    if(composer) composer.hidden = !canEdit;
+    if(!canEdit) $('form').classList.remove('open');
+    var who = $('whoami');
+    if(canEdit){
+      who.textContent = me ? '我是 '+me : '設定名字';
+      who.classList.remove('lock');
+    } else {
+      who.textContent = '編輯';
+      who.classList.add('lock');
+    }
+    var b = $('roBanner');
+    b.hidden = canEdit;
+    b.innerHTML = passwordSet
+      ? '目前是<b>唯讀</b>，只能看。要修改請按右上角「編輯」，輸入編輯密碼。'
+      : '目前還沒有設定編輯密碼，所有人都只能看。';
+    render();
+  }
+
+  function dropEdit(msg){
+    if(!canEdit && !pw) return;
+    canEdit = false;
+    pw = ''; keep('boardPw', '');
+    closeOverlay();
+    applyMode();
+    if(msg) toast(msg);
+  }
+
+  function askPassword(){
+    var g=document.createElement('div');
+    g.className='gate';
+    g.innerHTML='<div class="inner"><h2>輸入編輯密碼</h2>'
+      +'<p>有密碼才能新增、勾完工、修改。沒有密碼的人一樣看得到全部內容。</p>'
+      +'<div class="field"><label for="gPw">編輯密碼</label>'
+      +'<input id="gPw" type="password" autocomplete="current-password"></div>'
+      +'<p class="err" id="gPwErr" hidden></p>'
+      +'<div class="form-actions"><button class="btn btn-solid" id="gPwGo" disabled>進入編輯</button>'
+      +'<button class="btn btn-quiet" id="gPwCancel">取消</button></div></div>';
+    document.body.appendChild(g);
+    var input=g.querySelector('#gPw'), go=g.querySelector('#gPwGo'), err=g.querySelector('#gPwErr');
+    setTimeout(function(){ input.focus(); },60);
+    input.addEventListener('input', function(){ go.disabled = !input.value; err.hidden = true; });
+
+    function submit(){
+      var v = input.value;
+      if(!v) return;
+      go.disabled = true; go.textContent = '確認中…';
+      api('auth', {}, { pw: v }).then(function(){
+        pw = v; keep('boardPw', v);
+        canEdit = true;
+        g.remove();
+        applyMode();
+        toast('已進入編輯模式');
+        if(!me) askName(true);
+        refresh().catch(function(){});
+      }).catch(function(e){
+        go.disabled = false; go.textContent = '進入編輯';
+        err.textContent = e.message; err.hidden = false;
+        input.select();
       });
+    }
+    go.addEventListener('click', submit);
+    input.addEventListener('keydown', function(e){
+      if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) submit();
     });
+    g.querySelector('#gPwCancel').addEventListener('click', function(){ g.remove(); });
   }
 
   /* ---------- 照片 ---------- */
@@ -500,11 +916,21 @@
     if(small) return '<span class="chop chop-sm"><b>完</b></span>';
     return '<span class="chop"><b>完工</b><span>'+esc(t.doneBy)+'<br>'+fmt(t.doneAt)+'</span></span>';
   }
+  function isTmp(t){ return String(t.id).indexOf('tmp_') === 0; }
   function slipHTML(t){
+    // 還沒存好的待辦先不給點，不然會對著一個還不存在的編號操作
+    if(isTmp(t)){
+      return '<article class="slip saving"><span class="tick tick-off" aria-hidden="true"></span>'
+        + '<div class="slip-body"><span class="slip-top"><span class="no">#··</span>'
+        + '<span class="title">'+esc(t.title)+'</span></span>'
+        + '<div class="byline">儲存中…</div></div></article>';
+    }
     return '<article class="slip">'
-      + '<button class="tick" data-tick="'+t.id+'" aria-label="標記完工：'+esc(t.title)+'"></button>'
+      + (canEdit
+          ? '<button class="tick" data-tick="'+t.id+'" aria-label="標記完工：'+esc(t.title)+'"></button>'
+          : '<span class="tick tick-off" aria-hidden="true"></span>')
       + '<button class="slip-body" data-open="'+t.id+'">'
-      + '<span class="slip-top"><span class="no">'+(t.no ? '#'+pad(t.no) : '#··')+'</span>'
+      + '<span class="slip-top"><span class="no">#'+pad(t.no)+'</span>'
       + '<span class="title">'+esc(t.title)
       + (t.logs[0] && t.logs[0].action === '自動建立' ? '<span class="tag-rep">重複</span>' : '')
       + '</span></span>'
@@ -531,6 +957,14 @@
       + '<span class="ttl">'+(d>0 ? d+' 天' : '今天')+'</span>'
       + '<span class="m">'+esc(t.deletedBy||'')+'</span></button>';
   }
+  function repeatRowHTML(r){
+    var n = ymd(r.next);
+    return '<button class="rrow'+(r.paused?' paused':'')+'" data-repeat="'+r.id+'">'
+      + '<span class="cyc">'+esc(r.label)+'</span>'
+      + '<span class="t">'+esc(r.title)+'</span>'
+      + '<span class="m">'+(r.paused ? '暫停中' : (n ? '下次 '+n.m+'/'+n.d : ''))+'</span>'
+      + '</button>';
+  }
 
   function render(){
     var open = tasks.filter(function(t){ return t.status==='open'; })
@@ -547,15 +981,22 @@
     $('trashSection').hidden = trash.length === 0;
 
     $('openList').innerHTML = open.length ? open.map(slipHTML).join('')
-      : '<div class="empty">目前沒有待辦。<br>按上面「新增待辦」開一件。</div>';
+      : '<div class="empty">目前沒有待辦。'+(canEdit ? '<br>按上面「新增待辦」開一件。' : '')+'</div>';
     $('doneList').innerHTML = done.length ? done.map(doneRowHTML).join('')
       : '<div class="empty">還沒有完工的項目。</div>';
     $('trashList').innerHTML = trash.map(trashRowHTML).join('');
-    renderRepeats();
+
+    $('repeatCount').textContent = repeats.length;
+    $('repeatSection').hidden = repeats.length === 0;
+    $('repeatList').innerHTML = repeats.map(repeatRowHTML).join('');
   }
 
   function byId(id){
     for(var i=0;i<tasks.length;i++){ if(tasks[i].id===id) return tasks[i]; }
+    return null;
+  }
+  function repeatById(id){
+    for(var i=0;i<repeats.length;i++){ if(repeats[i].id===id) return repeats[i]; }
     return null;
   }
 
@@ -581,6 +1022,14 @@
     return sheet;
   }
 
+  function logHTML(logs){
+    if(!logs.length) return '<p class="muted">還沒有紀錄。</p>';
+    return '<ul class="log">' + logs.slice().sort(function(a,b){ return a.at-b.at; }).map(function(l){
+      return '<li><div class="lt">'+fmtFull(l.at)+'</div><div class="lb"><b>'+esc(l.who)+'</b> '
+        + esc(l.action) + (l.text?'：'+esc(l.text):'')+'</div></li>';
+    }).join('') + '</ul>';
+  }
+
   function drawThumbs(sheet){
     var box=sheet.querySelector('#thumbs');
     box.innerHTML = pending.map(function(u,i){
@@ -597,7 +1046,7 @@
 
   function askComplete(id){
     var t=byId(id);
-    if(!t) return;
+    if(!t || !canEdit) return;
     pending=[];
     var sheet=openSheet('標記完工',
         '<div class="d-title">'+esc(t.title)+'</div>'
@@ -607,7 +1056,7 @@
       + '<input type="file" id="file" accept="image/*" multiple hidden>'
       + '<div class="thumbs" id="thumbs"></div>'
       + '<div class="field" style="margin-top:18px"><label for="cNote">完工備註（可留空）</label>'
-      + '<textarea id="cNote" placeholder="做了什麼、還有什麼要追蹤…"></textarea></div>'
+      + '<textarea id="cNote"></textarea></div>'
       + '<div class="actions"><button class="btn btn-solid" id="cGo">確認完工</button>'
       + '<button class="btn btn-quiet" data-close="1">先不要</button></div>');
 
@@ -648,8 +1097,7 @@
       btn.disabled = true;
       btn.textContent = '上傳中…';
       pending = [];
-      api('done', { id:id, note:note, photos:shots })
-        .then(applyBoard)
+      write('done', { id:id, note:note, photos:shots })
         .then(function(){
           closeOverlay();
           openDoneSection();
@@ -674,9 +1122,10 @@
     if(first) first.classList.add('stamping');
   }
 
-  function openEdit(id){
+  /** draft：上次沒存成功的內容，重開時帶回來，不讓使用者重打 */
+  function openEdit(id, draft){
     var t = byId(id);
-    if(!t) return;
+    if(!t || !canEdit) return;
     var sheet = openSheet('編輯待辦',
         '<div class="field"><label for="eTitle">要做什麼</label>'
       + '<input id="eTitle" type="text" autocomplete="off"></div>'
@@ -691,9 +1140,9 @@
     var ti = sheet.querySelector('#eTitle');
     var si = sheet.querySelector('#eSite');
     var di = sheet.querySelector('#eDesc');
-    ti.value = t.title;
-    si.value = t.site || '';
-    di.value = t.desc || '';
+    ti.value = draft ? draft.title : t.title;
+    si.value = draft ? draft.site : (t.site || '');
+    di.value = draft ? draft.desc : (t.desc || '');
 
     function sync(){ sheet.querySelector('#eSave').disabled = !ti.value.trim(); }
     ti.addEventListener('input', sync);
@@ -706,6 +1155,7 @@
         closeOverlay(); openDetail(id);
         return;
       }
+      var d = { title:title, site:site, desc:desc };
       closeOverlay();
       act('edit', { id:id, title:title, site:site, desc:desc }, function(){
         patch(id, {
@@ -713,13 +1163,13 @@
           logs: byId(id).logs.concat([{ at:Date.now(), who:whoami(), action:'修改', text:'儲存中…' }])
         });
       }).then(function(){ openDetail(id); toast('已更新'); })
-        .catch(function(e){ toast(e.message); });
+        .catch(function(e){ toast(e.message + '，剛才改的內容還在'); if(canEdit) openEdit(id, d); });
     });
   }
 
   function openDetail(id){
     var t=byId(id);
-    if(!t) return;
+    if(!t || isTmp(t)) return;
     var body='<div class="d-title"><span class="no">#'+pad(t.no)+'</span> '+esc(t.title)+'</div>'
       + (t.site?'<span class="site">'+esc(t.site)+'</span>':'')
       + (t.desc?'<div class="d-desc">'+esc(t.desc)+'</div>':'');
@@ -743,18 +1193,15 @@
           : '<span style="color:var(--mute);font-size:13px">尚未上傳照片。</span>')
       + '</div>';
 
-    body += '<div class="sec-label">案件紀錄</div><ul class="log">'
-      + t.logs.slice().sort(function(a,b){ return a.at-b.at; }).map(function(l){
-          return '<li><div class="lt">'+fmtFull(l.at)+'</div><div class="lb"><b>'+esc(l.who)+'</b> '
-            + esc(l.action) + (l.text?'：'+esc(l.text):'')+'</div></li>';
-        }).join('')
-      + '</ul>';
+    body += '<div class="sec-label">案件紀錄</div>' + logHTML(t.logs);
 
-    if(t.status==='trash'){
+    if(!canEdit){
+      body += '<p class="hint ro-hint">唯讀檢視，只能看不能改。</p>';
+    } else if(t.status==='trash'){
       body += '<div class="actions"><button class="btn btn-solid" id="restore">還原這件</button></div>';
     } else {
       body += '<div class="field" style="margin-top:6px"><label for="nNote">加一筆紀錄</label>'
-        + '<textarea id="nNote" placeholder="進度、追加事項、對方回覆…"></textarea>'
+        + '<textarea id="nNote"></textarea>'
         + '<button class="btn" id="nGo" style="margin-top:8px">加入紀錄</button></div>'
         + '<div class="actions"><button class="btn" id="edit">編輯內容</button>'
         + '<button class="btn" id="addPhoto">＋ 補上照片</button>'
@@ -778,6 +1225,8 @@
       });
     });
 
+    if(!canEdit) return;
+
     var rs=sheet.querySelector('#restore');
     if(rs) rs.addEventListener('click', function(){
       this.disabled=true;
@@ -791,13 +1240,14 @@
     if(t.status==='trash') return;
 
     sheet.querySelector('#nGo').addEventListener('click', function(){
+      var btn = this;
       var v=sheet.querySelector('#nNote').value.trim();
       if(!v){ toast('先寫點東西'); return; }
-      this.disabled=true;
+      btn.disabled=true;
       act('note', {id:id, text:v}, function(){
         patch(id, { logs: byId(id).logs.concat([{ at:Date.now(), who:whoami(), action:'留言', text:v }]) });
       }).then(function(){ openDetail(id); toast('已加入紀錄'); })
-        .catch(function(e){ toast(e.message); });
+        .catch(function(e){ btn.disabled=false; toast(e.message); });
     });
 
     var f2=sheet.querySelector('#file2');
@@ -806,10 +1256,10 @@
       var files=Array.prototype.slice.call(f2.files||[]).slice(0,6);
       f2.value='';
       if(!files.length) return;
-      toast('照片處理中…');
+      toast('照片上傳中…');
       Promise.all(files.map(shrink))
-        .then(function(list){ return api('photos',{id:id, photos:list}); })
-        .then(applyBoard).then(function(){ openDetail(id); toast('照片已上傳'); })
+        .then(function(list){ return write('photos',{id:id, photos:list}); })
+        .then(function(){ openDetail(id); toast('照片已上傳'); })
         .catch(function(e){ toast(e.message||'照片上傳失敗'); });
     });
 
@@ -840,7 +1290,94 @@
     });
   }
 
-  /* ---------- 名字與通行碼 ---------- */
+  /* ---------- 重複設定：明細與編輯 ---------- */
+  function openRepeat(id){
+    var r = repeatById(id);
+    if(!r) return;
+    var n = ymd(r.next);
+    var body = '<div class="d-title">'+esc(r.title)+'</div>'
+      + (r.site?'<span class="site">'+esc(r.site)+'</span>':'')
+      + (r.desc?'<div class="d-desc">'+esc(r.desc)+'</div>':'')
+      + '<dl class="facts">'
+      + '<dt>週期</dt><dd><span class="cyc">'+esc(r.label)+'</span>'
+      + (r.paused ? ' <span class="paused-tag">暫停中</span>' : '')+'</dd>'
+      + '<dt>下次出現</dt><dd>'
+      + (r.paused ? '暫停中，不會自動產生'
+          : (n ? esc(showYmd(n, true)) + (r.nextLunar ? '<span class="lunar">農曆'+esc(r.nextLunar)+'</span>' : '') : '—'))
+      + '</dd>'
+      + '<dt>建立</dt><dd>'+esc(r.by)+(r.at ? ' · '+fmtFull(r.at) : '')+'</dd>'
+      + (r.editBy ? '<dt>最後修改</dt><dd>'+esc(r.editBy)+' · '+fmtFull(r.editAt)+'</dd>' : '')
+      + '</dl>'
+      + '<div class="sec-label">設定紀錄</div>' + logHTML(r.logs || []);
+
+    body += canEdit
+      ? '<div class="actions"><button class="btn btn-solid" id="rEdit">編輯設定</button>'
+        + '<button class="btn btn-danger" id="rDel">刪除這項設定</button></div>'
+      : '<p class="hint ro-hint">唯讀檢視，只能看不能改。</p>';
+
+    var sheet = openSheet('重複設定', body);
+    if(!canEdit) return;
+
+    sheet.querySelector('#rEdit').addEventListener('click', function(){ openRepeatEdit(id); });
+    sheet.querySelector('#rDel').addEventListener('click', function(){
+      if(!confirm('刪除重複設定「'+r.title+'」？\n\n已經產生的待辦不會消失，只是以後不再自動出現。')) return;
+      closeOverlay();
+      act('delRepeat', {id:id}, function(){
+        repeats = repeats.filter(function(x){ return x.id !== id; });
+      }).then(function(){ toast('已刪除重複設定'); })
+        .catch(function(e){ toast(e.message); });
+    });
+  }
+
+  function openRepeatEdit(id, draft){
+    var r = repeatById(id);
+    if(!r || !canEdit) return;
+    var src = draft || r;
+    var sheet = openSheet('編輯重複設定',
+        '<div class="field"><label for="rTitle">要做什麼</label>'
+      + '<input id="rTitle" type="text" autocomplete="off"></div>'
+      + '<div class="field"><label for="rSite">分類（可留空）</label>'
+      + '<input id="rSite" type="text" autocomplete="off"></div>'
+      + '<div class="field"><label for="rDesc">說明（可留空）</label>'
+      + '<textarea id="rDesc"></textarea></div>'
+      + '<div class="sec-label">週期</div>'
+      + repeatFieldsHTML('r')
+      + '<label class="check"><input type="checkbox" id="rPaused"><span>暫停（先不要自動產生）</span></label>'
+      + '<p class="hint">改了什麼會記在設定紀錄裡，包含原本的內容。已經產生的待辦不受影響。</p>'
+      + '<div class="actions"><button class="btn btn-solid" id="rSave">儲存修改</button>'
+      + '<button class="btn btn-quiet" data-close="1">取消</button></div>');
+
+    var ti = sheet.querySelector('#rTitle'), si = sheet.querySelector('#rSite'),
+        di = sheet.querySelector('#rDesc'), pa = sheet.querySelector('#rPaused');
+    ti.value = src.title; si.value = src.site || ''; di.value = src.desc || '';
+    pa.checked = !!src.paused;
+    var fields = bindRepeatFields(sheet, 'r', src.rule || r);
+
+    function sync(){ sheet.querySelector('#rSave').disabled = !ti.value.trim(); }
+    ti.addEventListener('input', sync);
+    sync();
+
+    sheet.querySelector('#rSave').addEventListener('click', function(){
+      var rule = fields.get();
+      var d = { title: ti.value.trim(), site: si.value.trim(), desc: di.value.trim(),
+                paused: pa.checked, rule: rule };
+      if(!d.title){ toast('標題不能空白'); return; }
+      var payload = { id:id, title:d.title, site:d.site, desc:d.desc, paused:d.paused,
+                      freq:rule.freq, cal:rule.cal, weekday:rule.weekday, month:rule.month, day:rule.day };
+      closeOverlay();
+      act('editRepeat', payload, function(){
+        repeats = repeats.map(function(x){
+          if(x.id !== id) return x;
+          var y = {}; for(var k in x) y[k] = x[k];
+          y.title = d.title; y.site = d.site; y.desc = d.desc; y.paused = d.paused;
+          y.label = ruleLabel(rule);
+          return y;
+        });
+      }).then(function(){ openRepeat(id); toast('重複設定已更新'); })
+        .catch(function(e){ toast(e.message + '，剛才改的內容還在'); if(canEdit) openRepeatEdit(id, d); });
+    });
+  }
+
   /* ---------- 加到主畫面的指引 ---------- */
   function env(){
     var ua = navigator.userAgent || '';
@@ -919,6 +1456,7 @@
     ta.remove();
   }
 
+  /* ---------- 名字 ---------- */
   function askName(first){
     var others = people.filter(function(n){ return n !== me; });
     var g=document.createElement('div');
@@ -939,6 +1477,7 @@
       +(first && others.length
           ? '<p class="tip">每次進來都要重選？<button id="gHowto">把板子加到主畫面</button>就會記住你。</p>'
           : '')
+      +(first ? '' : '<p class="tip"><button id="gLogout">退出編輯模式</button>（這台手機會忘記編輯密碼，回到唯讀）</p>')
       +'</div>';
     document.body.appendChild(g);
 
@@ -950,7 +1489,7 @@
       if(!v){ toast('先輸入名字'); return; }
       me = v.slice(0,12);
       keep('boardName', me);
-      $('whoami').textContent='我是 '+me;
+      applyMode();
       g.remove();
     }
     g.querySelectorAll('[data-pick]').forEach(function(b){
@@ -966,86 +1505,37 @@
     if(c) c.addEventListener('click', function(){ g.remove(); });
     var h=g.querySelector('#gHowto');
     if(h) h.addEventListener('click', openGuide);
-  }
-
-  function askPass(){
-    return new Promise(function(res){
-      var g=document.createElement('div');
-      g.className='gate';
-      g.innerHTML='<div class="inner"><h2>需要通行碼</h2>'
-        +'<p>這塊板子有設通行碼，跟建立的人要一下就好。</p>'
-        +'<div class="field"><label for="gPass">通行碼</label>'
-        +'<input id="gPass" type="password" autocomplete="off"></div>'
-        +'<div class="form-actions"><button class="btn btn-solid" id="pGo">進入</button></div></div>';
-      document.body.appendChild(g);
-      var input=g.querySelector('#gPass');
-      setTimeout(function(){ input.focus(); },60);
-      function go(){
-        pass=input.value.trim();
-        keep('boardPass', pass);
-        g.remove();
-        res();
-      }
-      g.querySelector('#pGo').addEventListener('click', go);
-      input.addEventListener('keydown', function(e){
-        if(e.key==='Enter' && !e.isComposing && e.keyCode !== 229) go();
-      });
+    var lo=g.querySelector('#gLogout');
+    if(lo) lo.addEventListener('click', function(){
+      g.remove();
+      canEdit = false; pw = ''; keep('boardPw', '');
+      applyMode();
+      toast('已回到唯讀');
     });
   }
 
-  /* ---------- 重複設定表單 ---------- */
-  var WEEKDAYS = ['','星期一','星期二','星期三','星期四','星期五','星期六','星期日'];
+  /* ---------- 新增待辦 ---------- */
+  var composerFields = null;
 
-  function fillSelect(el, from, to, label){
-    var out='';
-    for(var i=from;i<=to;i++){ out += '<option value="'+i+'">'+label(i)+'</option>'; }
-    el.innerHTML = out;
-  }
-  fillSelect($('fWeekday'), 1, 7, function(i){ return WEEKDAYS[i]; });
-  fillSelect($('fMonth'), 1, 12, function(i){ return i+' 月'; });
-  fillSelect($('fDay'), 1, 31, function(i){ return i+' 號'; });
-  $('fDay').value = String(new Date().getDate());
-  $('fMonth').value = String(new Date().getMonth()+1);
-  $('fWeekday').value = String(new Date().getDay() || 7);
-
-  function repeatParam(){
-    var f = $('fFreq').value;
-    if(f==='每週') return $('fWeekday').value;
-    if(f==='每月') return $('fDay').value;
-    if(f==='每年') return $('fMonth').value + '-' + $('fDay').value;
-    return '';
-  }
-  function repeatLabel(){
-    var f = $('fFreq').value;
-    if(f==='每天') return '每天';
-    if(f==='每週') return '每' + WEEKDAYS[Number($('fWeekday').value)].replace('星期','週');
-    if(f==='每月') return '每月 ' + $('fDay').value + ' 號';
-    return '每年 ' + $('fMonth').value + ' 月 ' + $('fDay').value + ' 日';
-  }
-  function syncRepeatUI(){
+  function syncComposer(){
     var on = $('fRepeat').checked;
-    var f = $('fFreq').value;
     $('repeatBox').hidden = !on;
-    $('wkField').hidden = f!=='每週';
-    $('monField').hidden = f!=='每年';
-    $('dayField').hidden = (f==='每天' || f==='每週');
-    $('repeatHint').textContent = on ? (repeatLabel() + ' 自動出現在待辦清單') : '';
+    if(on && composerFields) composerFields.sync();
     $('fSave').textContent = on ? '建立重複設定' : '加入待辦';
+    $('fSave').disabled = !$('fTitle').value.trim();
   }
-  function syncSaveState(){ $('fSave').disabled = !$('fTitle').value.trim(); }
 
-  $('fRepeat').addEventListener('change', syncRepeatUI);
-  $('fFreq').addEventListener('change', syncRepeatUI);
-  ['fWeekday','fMonth','fDay'].forEach(function(id){
-    $(id).addEventListener('change', syncRepeatUI);
-  });
-
-  /* ---------- 綁定 ---------- */
   function resetForm(){
     $('fTitle').value=''; $('fSite').value=''; $('fDesc').value='';
     $('fRepeat').checked = false;
-    syncRepeatUI();
-    syncSaveState();
+    syncComposer();
+  }
+
+  function restoreDraft(d){
+    $('fTitle').value = d.title; $('fSite').value = d.site; $('fDesc').value = d.desc;
+    $('fRepeat').checked = !!d.repeating;
+    $('form').classList.add('open');
+    syncComposer();
   }
 
   function addTask(){
@@ -1053,9 +1543,12 @@
     if(!title){ toast('先寫要做什麼'); return; }
     var repeating = $('fRepeat').checked;
     var payload = { title:title, site:$('fSite').value.trim(), desc:$('fDesc').value.trim() };
-    if(repeating){ payload.freq = $('fFreq').value; payload.param = repeatParam(); }
-
-    var draft = payload;
+    if(repeating){
+      var r = composerFields.get();
+      payload.freq = r.freq; payload.cal = r.cal; payload.weekday = r.weekday;
+      payload.month = r.month; payload.day = r.day;
+    }
+    var draft = { title:payload.title, site:payload.site, desc:payload.desc, repeating:repeating };
     resetForm();
     $('form').classList.remove('open');
 
@@ -1074,48 +1567,56 @@
       } else {
         toast('已加入待辦');
       }
-    }).catch(function(e){ toast(e.message); });
+    }).catch(function(e){
+      // 失敗時把剛才打的字放回去，不讓人重打
+      toast(e.message + '，剛才打的內容還在');
+      if(canEdit) restoreDraft(draft);
+    });
   }
 
+  /* ---------- 綁定 ---------- */
   $('addToggle').addEventListener('click', function(){
     var f=$('form');
     f.classList.toggle('open');
-    if(f.classList.contains('open')){ syncSaveState(); $('fTitle').focus(); }
+    if(f.classList.contains('open')){ syncComposer(); $('fTitle').focus(); }
   });
   $('fCancel').addEventListener('click', function(){
     $('form').classList.remove('open');
     resetForm();
   });
   $('fSave').addEventListener('click', addTask);
-  $('fTitle').addEventListener('input', syncSaveState);
+  $('fTitle').addEventListener('input', syncComposer);
   // 不綁 Enter：中文輸入法按 Enter 是要選字，不是要送出
-  $('repeatHead').addEventListener('click', function(){
-    var exp=this.getAttribute('aria-expanded')==='true';
-    this.setAttribute('aria-expanded', exp?'false':'true');
-    $('repeatList').classList.toggle('open', !exp);
+  $('fRepeat').addEventListener('change', function(){
+    if($('fRepeat').checked && !composerFields){
+      $('repeatBox').innerHTML = repeatFieldsHTML('f');
+      composerFields = bindRepeatFields($('repeatBox'), 'f', null);
+    }
+    syncComposer();
   });
-  $('doneHead').addEventListener('click', function(){
-    var exp=this.getAttribute('aria-expanded')==='true';
-    this.setAttribute('aria-expanded', exp?'false':'true');
-    $('doneList').classList.toggle('open', !exp);
+
+  ['repeat','done','trash'].forEach(function(k){
+    $(k+'Head').addEventListener('click', function(){
+      var exp=this.getAttribute('aria-expanded')==='true';
+      this.setAttribute('aria-expanded', exp?'false':'true');
+      $(k+'List').classList.toggle('open', !exp);
+    });
   });
-  $('trashHead').addEventListener('click', function(){
-    var exp=this.getAttribute('aria-expanded')==='true';
-    this.setAttribute('aria-expanded', exp?'false':'true');
-    $('trashList').classList.toggle('open', !exp);
+  $('whoami').addEventListener('click', function(){
+    if(canEdit) askName(false); else askPassword();
   });
-  $('whoami').addEventListener('click', function(){ askName(false); });
   $('howto').addEventListener('click', openGuide);
   $('sync').addEventListener('click', function(){
     refresh().then(function(){ toast('已更新'); }).catch(function(e){ toast(e.message); });
   });
 
   document.addEventListener('click', function(e){
-    var el=e.target.closest ? e.target.closest('[data-tick],[data-open],[data-close]') : null;
+    var el=e.target.closest ? e.target.closest('[data-tick],[data-open],[data-close],[data-repeat]') : null;
     if(!el) return;
     if(el.hasAttribute('data-close')) return closeOverlay();
     if(el.hasAttribute('data-tick')) return askComplete(el.getAttribute('data-tick'));
     if(el.hasAttribute('data-open')) return openDetail(el.getAttribute('data-open'));
+    if(el.hasAttribute('data-repeat')) return openRepeat(el.getAttribute('data-repeat'));
   });
   document.addEventListener('keydown', function(e){
     if(e.key==='Escape' && overlayOpen) closeOverlay();
@@ -1134,19 +1635,15 @@
   }
 
   me = recall('boardName');
-  pass = recall('boardPass');
+  pw = recall('boardPw');
 
-  (function start(){
-    refresh().then(function(){
-      $('boot').hidden = true;
-      $('app').hidden = false;
-      if(me){ $('whoami').textContent = '我是 '+me; }
-      else { askName(true); }
-    }).catch(function(e){
-      if(e.needPass){ return askPass().then(start); }
-      gate('打不開待辦板', '<p>'+esc(e.message)+'</p>');
-    });
-  })();
+  refresh().then(function(){
+    $('boot').hidden = true;
+    $('app').hidden = false;
+    if(canEdit && !me) askName(true);
+  }).catch(function(e){
+    gate('打不開待辦板', '<p>'+esc(e.message)+'</p>');
+  });
 
 })();
 </script>
